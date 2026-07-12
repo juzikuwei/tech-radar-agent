@@ -1,0 +1,116 @@
+{
+  "dataset_version": 1,
+  "corpus": "data/raw/arxiv_agent_50.jsonl",
+  "label_policy": {
+    "relevant": "The title and abstract directly address the question.",
+    "partially_relevant": "The paper shares a subtopic but cannot directly answer the question.",
+    "irrelevant": "Any corpus paper not listed for that question.",
+    "answerable": "At least one directly relevant paper exists in the current corpus."
+  },
+  "questions": [
+    {
+      "id": "memory_long_horizon",
+      "query": "Agent 在长任务中如何避免遗忘重要状态？",
+      "answerable": true,
+      "relevant_arxiv_ids": ["2607.08716"],
+      "partially_relevant_arxiv_ids": ["2607.08252"],
+      "rationale": "2607.08716 directly studies behavioral state decay and proactive memory intervention; 2607.08252 discusses long-term persona state but not general task-memory retrieval."
+    },
+    {
+      "id": "recursive_web_search",
+      "query": "多 Agent 如何通过递归委派完成深度和广度兼顾的网页搜索？",
+      "answerable": true,
+      "relevant_arxiv_ids": ["2607.08662"],
+      "partially_relevant_arxiv_ids": [],
+      "rationale": "2607.08662 directly proposes recursive multi-agent delegation for deep-and-wide web search."
+    },
+    {
+      "id": "hallucination_game_theory",
+      "query": "博弈论驱动的多 Agent 框架能否减少科学领域语言模型幻觉？",
+      "answerable": true,
+      "relevant_arxiv_ids": ["2607.08403"],
+      "partially_relevant_arxiv_ids": ["2607.08288"],
+      "rationale": "2607.08403 directly evaluates a game-theoretic multi-agent framework for hallucination reduction; 2607.08288 discusses grounded compliance and residual hallucination risk without the same method."
+    },
+    {
+      "id": "mcp_compliance",
+      "query": "MCP Agent 如何把关键基础设施文档转换成可审计的持续合规材料？",
+      "answerable": true,
+      "relevant_arxiv_ids": ["2607.08288"],
+      "partially_relevant_arxiv_ids": [],
+      "rationale": "2607.08288 directly describes an MCP-grounded pipeline that produces knowledge graphs and NIST OSCAL artifacts."
+    },
+    {
+      "id": "web_prompt_injection",
+      "query": "网页 Agent 如何防御跨站提示词注入并限制不可信页面内容的权限？",
+      "answerable": true,
+      "relevant_arxiv_ids": ["2607.08147"],
+      "partially_relevant_arxiv_ids": ["2607.08180"],
+      "rationale": "2607.08147 directly presents contextual least privilege and confinement for web-agent prompt injection; 2607.08180 concerns content protection against agentic crawlers."
+    },
+    {
+      "id": "multi_agent_failure_localization",
+      "query": "多 Agent 系统执行失败后，如何定位负责的 Agent 和最早出错步骤？",
+      "answerable": true,
+      "relevant_arxiv_ids": ["2607.07989"],
+      "partially_relevant_arxiv_ids": [],
+      "rationale": "2607.07989 directly studies agent-level and step-level failure localization."
+    },
+    {
+      "id": "grounded_skill_library",
+      "query": "如何为自主 Agent 建设带来源引用和质量门控的大规模技能库？",
+      "answerable": true,
+      "relevant_arxiv_ids": ["2607.07676"],
+      "partially_relevant_arxiv_ids": [],
+      "rationale": "2607.07676 directly presents a source-grounded skill library, acquisition pipeline, quality gate, and offline search bundles."
+    },
+    {
+      "id": "auditable_enterprise_harness",
+      "query": "企业 LLM Agent 如何把提示词原型改造成可审计、可验证的工程系统？",
+      "answerable": true,
+      "relevant_arxiv_ids": ["2607.08028"],
+      "partially_relevant_arxiv_ids": ["2607.08288"],
+      "rationale": "2607.08028 directly studies code-owned contracts, schemas, validators, traces, and model substitution in enterprise agents."
+    },
+    {
+      "id": "agentic_rag_underwriting",
+      "query": "Agentic RAG 在保险自动核保中相比普通 RAG 有什么优势？",
+      "answerable": true,
+      "relevant_arxiv_ids": ["2607.07858"],
+      "partially_relevant_arxiv_ids": [],
+      "rationale": "2607.07858 directly compares a single LLM, naive RAG, and an Agentic RAG underwriting pipeline."
+    },
+    {
+      "id": "deployment_rule_safety",
+      "query": "部署规则如何因果影响多 Agent 系统的集体安全行为？",
+      "answerable": true,
+      "relevant_arxiv_ids": ["2607.07695"],
+      "partially_relevant_arxiv_ids": [],
+      "rationale": "2607.07695 directly holds agents and tasks fixed while varying deployment rules to measure causal safety effects."
+    },
+    {
+      "id": "langgraph_vs_crewai",
+      "query": "LangGraph 和 CrewAI 在循环控制上的主要区别是什么？",
+      "answerable": false,
+      "relevant_arxiv_ids": [],
+      "partially_relevant_arxiv_ids": [],
+      "rationale": "The current corpus contains no direct comparison of LangGraph and CrewAI."
+    },
+    {
+      "id": "mcp_protocol_origin",
+      "query": "MCP 协议最初由谁提出，它的标准消息格式是什么？",
+      "answerable": false,
+      "relevant_arxiv_ids": [],
+      "partially_relevant_arxiv_ids": ["2607.08288"],
+      "rationale": "2607.08288 uses MCP in an application pipeline but does not establish the protocol's origin or full message specification."
+    },
+    {
+      "id": "vector_database_comparison",
+      "query": "ChromaDB、Milvus 和 Weaviate 在百万级向量检索中的性能差异是什么？",
+      "answerable": false,
+      "relevant_arxiv_ids": [],
+      "partially_relevant_arxiv_ids": [],
+      "rationale": "The current corpus has no direct vector-database benchmark or comparison."
+    }
+  ]
+}

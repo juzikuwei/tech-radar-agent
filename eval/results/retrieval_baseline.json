@@ -1,0 +1,675 @@
+{
+  "dataset_version": 1,
+  "corpus": "data/raw/arxiv_agent_50.jsonl",
+  "embedding_model": "intfloat/multilingual-e5-small",
+  "collection_size": 50,
+  "top_k": 5,
+  "summary": {
+    "answerable": {
+      "question_count": 10,
+      "mean_strict_precision": 0.2,
+      "mean_relaxed_precision": 0.24000000000000005,
+      "mean_strict_recall": 1.0,
+      "mean_relaxed_recall": 0.9,
+      "mean_mrr": 0.95
+    },
+    "unanswerable": {
+      "question_count": 3,
+      "mean_top_similarity": 0.7946014205614725,
+      "max_top_similarity": 0.8017826080322266,
+      "min_top_similarity": 0.7806322574615479
+    }
+  },
+  "questions": [
+    {
+      "id": "memory_long_horizon",
+      "query": "Agent 在长任务中如何避免遗忘重要状态？",
+      "answerable": true,
+      "metrics": {
+        "strict_precision": 0.2,
+        "relaxed_precision": 0.4,
+        "strict_recall": 1.0,
+        "relaxed_recall": 1.0,
+        "mrr": 1.0
+      },
+      "top_similarity": 0.8423241376876831,
+      "results": [
+        {
+          "rank": 1,
+          "arxiv_id": "2607.08716",
+          "title": "Remember When It Matters: Proactive Memory Agent for Long-Horizon Agents",
+          "similarity": 0.8423241376876831,
+          "label": "relevant"
+        },
+        {
+          "rank": 2,
+          "arxiv_id": "2607.07508",
+          "title": "Single-Rollout Asynchronous Optimization for Agentic Reinforcement Learning",
+          "similarity": 0.8235664367675781,
+          "label": "irrelevant"
+        },
+        {
+          "rank": 3,
+          "arxiv_id": "2607.08180",
+          "title": "Out of Sight: Compression-Aware Content Protection against Agentic Crawlers",
+          "similarity": 0.8177859783172607,
+          "label": "irrelevant"
+        },
+        {
+          "rank": 4,
+          "arxiv_id": "2607.08252",
+          "title": "AutoPersonas: A Multi-Timescale Loop Engine for Open-Ended Persona Evolution",
+          "similarity": 0.8176525235176086,
+          "label": "partially_relevant"
+        },
+        {
+          "rank": 5,
+          "arxiv_id": "2607.08497",
+          "title": "Cognitive-structured Multimodal Agent for Multimodal Understanding, Generation, and Editing",
+          "similarity": 0.8128185868263245,
+          "label": "irrelevant"
+        }
+      ]
+    },
+    {
+      "id": "recursive_web_search",
+      "query": "多 Agent 如何通过递归委派完成深度和广度兼顾的网页搜索？",
+      "answerable": true,
+      "metrics": {
+        "strict_precision": 0.2,
+        "relaxed_precision": 0.2,
+        "strict_recall": 1.0,
+        "relaxed_recall": 1.0,
+        "mrr": 1.0
+      },
+      "top_similarity": 0.841063380241394,
+      "results": [
+        {
+          "rank": 1,
+          "arxiv_id": "2607.08662",
+          "title": "WebSwarm: Recursive Multi-Agent Orchestration for Deep-and-Wide Web Search",
+          "similarity": 0.841063380241394,
+          "label": "relevant"
+        },
+        {
+          "rank": 2,
+          "arxiv_id": "2607.07984",
+          "title": "Agentic Neural Architecture Search",
+          "similarity": 0.8252508044242859,
+          "label": "irrelevant"
+        },
+        {
+          "rank": 3,
+          "arxiv_id": "2607.07858",
+          "title": "Agentic AI and Retrieval-Augmented Models in Straight-Through Underwriting",
+          "similarity": 0.8197007179260254,
+          "label": "irrelevant"
+        },
+        {
+          "rank": 4,
+          "arxiv_id": "2607.08691",
+          "title": "ProjAgent: Procedural Similarity Retrieval for Repository-Level Code Generation",
+          "similarity": 0.8186184167861938,
+          "label": "irrelevant"
+        },
+        {
+          "rank": 5,
+          "arxiv_id": "2607.08400",
+          "title": "TRACE: A Two-Channel Robust Attribution Watermark via Complementary Embeddings for LLM-Agent Trajectories",
+          "similarity": 0.8175998330116272,
+          "label": "irrelevant"
+        }
+      ]
+    },
+    {
+      "id": "hallucination_game_theory",
+      "query": "博弈论驱动的多 Agent 框架能否减少科学领域语言模型幻觉？",
+      "answerable": true,
+      "metrics": {
+        "strict_precision": 0.2,
+        "relaxed_precision": 0.2,
+        "strict_recall": 1.0,
+        "relaxed_recall": 0.5,
+        "mrr": 1.0
+      },
+      "top_similarity": 0.8581821322441101,
+      "results": [
+        {
+          "rank": 1,
+          "arxiv_id": "2607.08403",
+          "title": "Game Theory Driven Multi-Agent Framework Mitigates Language Model Hallucination",
+          "similarity": 0.8581821322441101,
+          "label": "relevant"
+        },
+        {
+          "rank": 2,
+          "arxiv_id": "2607.07980",
+          "title": "3100 Opinions on Code Review in an AI World: Building Causal Theory from Practitioner Discourse",
+          "similarity": 0.8444548845291138,
+          "label": "irrelevant"
+        },
+        {
+          "rank": 3,
+          "arxiv_id": "2607.08375",
+          "title": "WCog-VLA: A Dual-Level World-Cognitive Vision-Language-Action Model for End-to-End Autonomous Driving",
+          "similarity": 0.842164158821106,
+          "label": "irrelevant"
+        },
+        {
+          "rank": 4,
+          "arxiv_id": "2607.07984",
+          "title": "Agentic Neural Architecture Search",
+          "similarity": 0.8387044668197632,
+          "label": "irrelevant"
+        },
+        {
+          "rank": 5,
+          "arxiv_id": "2607.07857",
+          "title": "Multi-agent Autoformalization of Tensor Network Theory",
+          "similarity": 0.836645781993866,
+          "label": "irrelevant"
+        }
+      ]
+    },
+    {
+      "id": "mcp_compliance",
+      "query": "MCP Agent 如何把关键基础设施文档转换成可审计的持续合规材料？",
+      "answerable": true,
+      "metrics": {
+        "strict_precision": 0.2,
+        "relaxed_precision": 0.2,
+        "strict_recall": 1.0,
+        "relaxed_recall": 1.0,
+        "mrr": 1.0
+      },
+      "top_similarity": 0.8373037576675415,
+      "results": [
+        {
+          "rank": 1,
+          "arxiv_id": "2607.08288",
+          "title": "From Legacy Documentation to OSCAL: An MCP-Based Agent Pipeline for Threat-Informed Continuous Compliance in Critical Infrastructure",
+          "similarity": 0.8373037576675415,
+          "label": "relevant"
+        },
+        {
+          "rank": 2,
+          "arxiv_id": "2607.08681",
+          "title": "SolarChain-Eval: A Physics-Constrained Benchmark for Trustworthy Economic Agents in Decentralized Energy Markets",
+          "similarity": 0.8229870200157166,
+          "label": "irrelevant"
+        },
+        {
+          "rank": 3,
+          "arxiv_id": "2607.07858",
+          "title": "Agentic AI and Retrieval-Augmented Models in Straight-Through Underwriting",
+          "similarity": 0.8218963146209717,
+          "label": "irrelevant"
+        },
+        {
+          "rank": 4,
+          "arxiv_id": "2607.08180",
+          "title": "Out of Sight: Compression-Aware Content Protection against Agentic Crawlers",
+          "similarity": 0.8201287984848022,
+          "label": "irrelevant"
+        },
+        {
+          "rank": 5,
+          "arxiv_id": "2607.08495",
+          "title": "The Context Access Divide: Interaction-Level Architecture as a Complementary Dimension of Agentic Inequality",
+          "similarity": 0.8165144920349121,
+          "label": "irrelevant"
+        }
+      ]
+    },
+    {
+      "id": "web_prompt_injection",
+      "query": "网页 Agent 如何防御跨站提示词注入并限制不可信页面内容的权限？",
+      "answerable": true,
+      "metrics": {
+        "strict_precision": 0.2,
+        "relaxed_precision": 0.4,
+        "strict_recall": 1.0,
+        "relaxed_recall": 1.0,
+        "mrr": 0.5
+      },
+      "top_similarity": 0.8488409519195557,
+      "results": [
+        {
+          "rank": 1,
+          "arxiv_id": "2607.08180",
+          "title": "Out of Sight: Compression-Aware Content Protection against Agentic Crawlers",
+          "similarity": 0.8488409519195557,
+          "label": "partially_relevant"
+        },
+        {
+          "rank": 2,
+          "arxiv_id": "2607.08147",
+          "title": "Prismata: Confining Cross-Site Prompt Injection in Web Agents",
+          "similarity": 0.8441535830497742,
+          "label": "relevant"
+        },
+        {
+          "rank": 3,
+          "arxiv_id": "2607.08282",
+          "title": "Multi-Agent Firewall Architecture for Privacy Protection of Sensitive Data in Interactions with Language Models",
+          "similarity": 0.8331837058067322,
+          "label": "irrelevant"
+        },
+        {
+          "rank": 4,
+          "arxiv_id": "2607.07980",
+          "title": "3100 Opinions on Code Review in an AI World: Building Causal Theory from Practitioner Discourse",
+          "similarity": 0.8176076412200928,
+          "label": "irrelevant"
+        },
+        {
+          "rank": 5,
+          "arxiv_id": "2607.08403",
+          "title": "Game Theory Driven Multi-Agent Framework Mitigates Language Model Hallucination",
+          "similarity": 0.8169355392456055,
+          "label": "irrelevant"
+        }
+      ]
+    },
+    {
+      "id": "multi_agent_failure_localization",
+      "query": "多 Agent 系统执行失败后，如何定位负责的 Agent 和最早出错步骤？",
+      "answerable": true,
+      "metrics": {
+        "strict_precision": 0.2,
+        "relaxed_precision": 0.2,
+        "strict_recall": 1.0,
+        "relaxed_recall": 1.0,
+        "mrr": 1.0
+      },
+      "top_similarity": 0.8454598188400269,
+      "results": [
+        {
+          "rank": 1,
+          "arxiv_id": "2607.07989",
+          "title": "Who Broke the System? Failure Localization in LLM-Based Multi-Agent Systems",
+          "similarity": 0.8454598188400269,
+          "label": "relevant"
+        },
+        {
+          "rank": 2,
+          "arxiv_id": "2607.08400",
+          "title": "TRACE: A Two-Channel Robust Attribution Watermark via Complementary Embeddings for LLM-Agent Trajectories",
+          "similarity": 0.814340353012085,
+          "label": "irrelevant"
+        },
+        {
+          "rank": 3,
+          "arxiv_id": "2607.07858",
+          "title": "Agentic AI and Retrieval-Augmented Models in Straight-Through Underwriting",
+          "similarity": 0.813778817653656,
+          "label": "irrelevant"
+        },
+        {
+          "rank": 4,
+          "arxiv_id": "2607.08012",
+          "title": "Provably Optimal Learning Algorithms for Assistance Games",
+          "similarity": 0.8115670084953308,
+          "label": "irrelevant"
+        },
+        {
+          "rank": 5,
+          "arxiv_id": "2607.08028",
+          "title": "From Prompts to Contracts: Harness Engineering for Auditable Enterprise LLM Agents",
+          "similarity": 0.8107863068580627,
+          "label": "irrelevant"
+        }
+      ]
+    },
+    {
+      "id": "grounded_skill_library",
+      "query": "如何为自主 Agent 建设带来源引用和质量门控的大规模技能库？",
+      "answerable": true,
+      "metrics": {
+        "strict_precision": 0.2,
+        "relaxed_precision": 0.2,
+        "strict_recall": 1.0,
+        "relaxed_recall": 1.0,
+        "mrr": 1.0
+      },
+      "top_similarity": 0.8386721611022949,
+      "results": [
+        {
+          "rank": 1,
+          "arxiv_id": "2607.07676",
+          "title": "SkillCenter: A Large-Scale Source-Grounded Skill Library for Autonomous AI Agents",
+          "similarity": 0.8386721611022949,
+          "label": "relevant"
+        },
+        {
+          "rank": 2,
+          "arxiv_id": "2607.08495",
+          "title": "The Context Access Divide: Interaction-Level Architecture as a Complementary Dimension of Agentic Inequality",
+          "similarity": 0.8252685070037842,
+          "label": "irrelevant"
+        },
+        {
+          "rank": 3,
+          "arxiv_id": "2607.07857",
+          "title": "Multi-agent Autoformalization of Tensor Network Theory",
+          "similarity": 0.8245111703872681,
+          "label": "irrelevant"
+        },
+        {
+          "rank": 4,
+          "arxiv_id": "2607.07858",
+          "title": "Agentic AI and Retrieval-Augmented Models in Straight-Through Underwriting",
+          "similarity": 0.8234495520591736,
+          "label": "irrelevant"
+        },
+        {
+          "rank": 5,
+          "arxiv_id": "2607.07984",
+          "title": "Agentic Neural Architecture Search",
+          "similarity": 0.8210135698318481,
+          "label": "irrelevant"
+        }
+      ]
+    },
+    {
+      "id": "auditable_enterprise_harness",
+      "query": "企业 LLM Agent 如何把提示词原型改造成可审计、可验证的工程系统？",
+      "answerable": true,
+      "metrics": {
+        "strict_precision": 0.2,
+        "relaxed_precision": 0.2,
+        "strict_recall": 1.0,
+        "relaxed_recall": 0.5,
+        "mrr": 1.0
+      },
+      "top_similarity": 0.8565372228622437,
+      "results": [
+        {
+          "rank": 1,
+          "arxiv_id": "2607.08028",
+          "title": "From Prompts to Contracts: Harness Engineering for Auditable Enterprise LLM Agents",
+          "similarity": 0.8565372228622437,
+          "label": "relevant"
+        },
+        {
+          "rank": 2,
+          "arxiv_id": "2607.07858",
+          "title": "Agentic AI and Retrieval-Augmented Models in Straight-Through Underwriting",
+          "similarity": 0.8420219421386719,
+          "label": "irrelevant"
+        },
+        {
+          "rank": 3,
+          "arxiv_id": "2607.08180",
+          "title": "Out of Sight: Compression-Aware Content Protection against Agentic Crawlers",
+          "similarity": 0.837304413318634,
+          "label": "irrelevant"
+        },
+        {
+          "rank": 4,
+          "arxiv_id": "2607.07984",
+          "title": "Agentic Neural Architecture Search",
+          "similarity": 0.8361891508102417,
+          "label": "irrelevant"
+        },
+        {
+          "rank": 5,
+          "arxiv_id": "2607.08681",
+          "title": "SolarChain-Eval: A Physics-Constrained Benchmark for Trustworthy Economic Agents in Decentralized Energy Markets",
+          "similarity": 0.8317011594772339,
+          "label": "irrelevant"
+        }
+      ]
+    },
+    {
+      "id": "agentic_rag_underwriting",
+      "query": "Agentic RAG 在保险自动核保中相比普通 RAG 有什么优势？",
+      "answerable": true,
+      "metrics": {
+        "strict_precision": 0.2,
+        "relaxed_precision": 0.2,
+        "strict_recall": 1.0,
+        "relaxed_recall": 1.0,
+        "mrr": 1.0
+      },
+      "top_similarity": 0.818778395652771,
+      "results": [
+        {
+          "rank": 1,
+          "arxiv_id": "2607.07858",
+          "title": "Agentic AI and Retrieval-Augmented Models in Straight-Through Underwriting",
+          "similarity": 0.818778395652771,
+          "label": "relevant"
+        },
+        {
+          "rank": 2,
+          "arxiv_id": "2607.08012",
+          "title": "Provably Optimal Learning Algorithms for Assistance Games",
+          "similarity": 0.8090241551399231,
+          "label": "irrelevant"
+        },
+        {
+          "rank": 3,
+          "arxiv_id": "2607.08716",
+          "title": "Remember When It Matters: Proactive Memory Agent for Long-Horizon Agents",
+          "similarity": 0.7981551885604858,
+          "label": "irrelevant"
+        },
+        {
+          "rank": 4,
+          "arxiv_id": "2607.07690",
+          "title": "Agon: Competitive Cross-Model RL with Implicit Rival Grading of Reasoning",
+          "similarity": 0.7962760329246521,
+          "label": "irrelevant"
+        },
+        {
+          "rank": 5,
+          "arxiv_id": "2607.08177",
+          "title": "ASMR: Agentic Schema Generation for Ship Maintenance Report Writing",
+          "similarity": 0.7916034460067749,
+          "label": "irrelevant"
+        }
+      ]
+    },
+    {
+      "id": "deployment_rule_safety",
+      "query": "部署规则如何因果影响多 Agent 系统的集体安全行为？",
+      "answerable": true,
+      "metrics": {
+        "strict_precision": 0.2,
+        "relaxed_precision": 0.2,
+        "strict_recall": 1.0,
+        "relaxed_recall": 1.0,
+        "mrr": 1.0
+      },
+      "top_similarity": 0.864907443523407,
+      "results": [
+        {
+          "rank": 1,
+          "arxiv_id": "2607.07695",
+          "title": "Institutional Red-Teaming: Deployment Rules, Not Just Models, Causally Shape Multi-Agent AI Safety",
+          "similarity": 0.864907443523407,
+          "label": "relevant"
+        },
+        {
+          "rank": 2,
+          "arxiv_id": "2607.07980",
+          "title": "3100 Opinions on Code Review in an AI World: Building Causal Theory from Practitioner Discourse",
+          "similarity": 0.830483078956604,
+          "label": "irrelevant"
+        },
+        {
+          "rank": 3,
+          "arxiv_id": "2607.07508",
+          "title": "Single-Rollout Asynchronous Optimization for Agentic Reinforcement Learning",
+          "similarity": 0.8295305371284485,
+          "label": "irrelevant"
+        },
+        {
+          "rank": 4,
+          "arxiv_id": "2607.08403",
+          "title": "Game Theory Driven Multi-Agent Framework Mitigates Language Model Hallucination",
+          "similarity": 0.8256945610046387,
+          "label": "irrelevant"
+        },
+        {
+          "rank": 5,
+          "arxiv_id": "2607.08652",
+          "title": "Formal Mechanisms for Market Stability in Self-Interested Agent Societies: A Marketplace Simulation Study",
+          "similarity": 0.8248372673988342,
+          "label": "irrelevant"
+        }
+      ]
+    },
+    {
+      "id": "langgraph_vs_crewai",
+      "query": "LangGraph 和 CrewAI 在循环控制上的主要区别是什么？",
+      "answerable": false,
+      "metrics": {
+        "strict_precision": null,
+        "relaxed_precision": null,
+        "strict_recall": null,
+        "relaxed_recall": null,
+        "mrr": null
+      },
+      "top_similarity": 0.8017826080322266,
+      "results": [
+        {
+          "rank": 1,
+          "arxiv_id": "2607.08180",
+          "title": "Out of Sight: Compression-Aware Content Protection against Agentic Crawlers",
+          "similarity": 0.8017826080322266,
+          "label": "irrelevant"
+        },
+        {
+          "rank": 2,
+          "arxiv_id": "2607.07980",
+          "title": "3100 Opinions on Code Review in an AI World: Building Causal Theory from Practitioner Discourse",
+          "similarity": 0.8011882305145264,
+          "label": "irrelevant"
+        },
+        {
+          "rank": 3,
+          "arxiv_id": "2607.07521",
+          "title": "Creativity from Friction: Human-AI Interaction for Exploratory Structural Design",
+          "similarity": 0.8008604049682617,
+          "label": "irrelevant"
+        },
+        {
+          "rank": 4,
+          "arxiv_id": "2607.08443",
+          "title": "ADORN: Adaptive Drift handling for Open RAN using Reinforcement Learning",
+          "similarity": 0.7979973554611206,
+          "label": "irrelevant"
+        },
+        {
+          "rank": 5,
+          "arxiv_id": "2607.07984",
+          "title": "Agentic Neural Architecture Search",
+          "similarity": 0.7969117164611816,
+          "label": "irrelevant"
+        }
+      ]
+    },
+    {
+      "id": "mcp_protocol_origin",
+      "query": "MCP 协议最初由谁提出，它的标准消息格式是什么？",
+      "answerable": false,
+      "metrics": {
+        "strict_precision": null,
+        "relaxed_precision": null,
+        "strict_recall": null,
+        "relaxed_recall": null,
+        "mrr": null
+      },
+      "top_similarity": 0.7806322574615479,
+      "results": [
+        {
+          "rank": 1,
+          "arxiv_id": "2607.08288",
+          "title": "From Legacy Documentation to OSCAL: An MCP-Based Agent Pipeline for Threat-Informed Continuous Compliance in Critical Infrastructure",
+          "similarity": 0.7806322574615479,
+          "label": "partially_relevant"
+        },
+        {
+          "rank": 2,
+          "arxiv_id": "2607.07857",
+          "title": "Multi-agent Autoformalization of Tensor Network Theory",
+          "similarity": 0.759942352771759,
+          "label": "irrelevant"
+        },
+        {
+          "rank": 3,
+          "arxiv_id": "2607.07824",
+          "title": "From Triggers to Emotions: A CPM-Grounded Appraisal Multi-Agent for Dynamic Emotional Evolution in Persona-Based Dialogue",
+          "similarity": 0.7567700147628784,
+          "label": "irrelevant"
+        },
+        {
+          "rank": 4,
+          "arxiv_id": "2607.08497",
+          "title": "Cognitive-structured Multimodal Agent for Multimodal Understanding, Generation, and Editing",
+          "similarity": 0.7536154985427856,
+          "label": "irrelevant"
+        },
+        {
+          "rank": 5,
+          "arxiv_id": "2607.08180",
+          "title": "Out of Sight: Compression-Aware Content Protection against Agentic Crawlers",
+          "similarity": 0.7510751485824585,
+          "label": "irrelevant"
+        }
+      ]
+    },
+    {
+      "id": "vector_database_comparison",
+      "query": "ChromaDB、Milvus 和 Weaviate 在百万级向量检索中的性能差异是什么？",
+      "answerable": false,
+      "metrics": {
+        "strict_precision": null,
+        "relaxed_precision": null,
+        "strict_recall": null,
+        "relaxed_recall": null,
+        "mrr": null
+      },
+      "top_similarity": 0.8013893961906433,
+      "results": [
+        {
+          "rank": 1,
+          "arxiv_id": "2607.08497",
+          "title": "Cognitive-structured Multimodal Agent for Multimodal Understanding, Generation, and Editing",
+          "similarity": 0.8013893961906433,
+          "label": "irrelevant"
+        },
+        {
+          "rank": 2,
+          "arxiv_id": "2607.08662",
+          "title": "WebSwarm: Recursive Multi-Agent Orchestration for Deep-and-Wide Web Search",
+          "similarity": 0.793508768081665,
+          "label": "irrelevant"
+        },
+        {
+          "rank": 3,
+          "arxiv_id": "2607.08375",
+          "title": "WCog-VLA: A Dual-Level World-Cognitive Vision-Language-Action Model for End-to-End Autonomous Driving",
+          "similarity": 0.7932050824165344,
+          "label": "irrelevant"
+        },
+        {
+          "rank": 4,
+          "arxiv_id": "2607.07676",
+          "title": "SkillCenter: A Large-Scale Source-Grounded Skill Library for Autonomous AI Agents",
+          "similarity": 0.7926602363586426,
+          "label": "irrelevant"
+        },
+        {
+          "rank": 5,
+          "arxiv_id": "2607.07985",
+          "title": "A Reliability Assessment of LALM Audio Judges for Full-Duplex Voice Agents",
+          "similarity": 0.790818452835083,
+          "label": "irrelevant"
+        }
+      ]
+    }
+  ]
+}

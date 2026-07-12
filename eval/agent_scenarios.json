@@ -1,0 +1,60 @@
+{
+  "dataset_version": 1,
+  "description": "Behavioral scenarios for the conversational Agentic RAG control flow.",
+  "scenarios": [
+    {
+      "id": "reuse_existing_evidence",
+      "description": "A direct follow-up should reuse papers that already cover step-level failure localization.",
+      "turns": [
+        {
+          "question": "多 Agent 系统执行失败后，如何定位负责的 Agent 和最早出错步骤？"
+        },
+        {
+          "question": "它能定位到具体步骤吗？",
+          "expected": {
+            "allowed_actions": ["answer_from_existing"],
+            "min_retrievals": 0,
+            "max_retrievals": 0,
+            "evidence_reuse": "required"
+          }
+        }
+      ]
+    },
+    {
+      "id": "retrieve_missing_evidence",
+      "description": "A follow-up asking for a new application domain should retain useful method evidence and retrieve the missing evaluation evidence.",
+      "turns": [
+        {
+          "question": "多 Agent 系统执行失败后，如何定位负责的 Agent 和最早出错步骤？"
+        },
+        {
+          "question": "这种方法在代码 Agent 中有实验结果吗？",
+          "expected": {
+            "allowed_actions": ["retrieve_missing"],
+            "min_retrievals": 1,
+            "max_retrievals": 2,
+            "evidence_reuse": "required"
+          }
+        }
+      ]
+    },
+    {
+      "id": "fresh_topic",
+      "description": "A new retrieval topic must not seed the search with previous failure-localization evidence.",
+      "turns": [
+        {
+          "question": "多 Agent 系统执行失败后，如何定位负责的 Agent 和最早出错步骤？"
+        },
+        {
+          "question": "Cross-encoder 在 RAG 中有什么作用？",
+          "expected": {
+            "allowed_actions": ["fresh_retrieval"],
+            "min_retrievals": 1,
+            "max_retrievals": 2,
+            "evidence_reuse": "forbidden"
+          }
+        }
+      ]
+    }
+  ]
+}
