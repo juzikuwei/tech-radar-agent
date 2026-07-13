@@ -10,3 +10,7 @@ data/*.db
 data/chroma/
 
 eval/results/agent_*.json
+
+frontend/node_modules/
+frontend/dist/
+frontend/.env.local
