@@ -8,6 +8,7 @@ from rag.research_plan import (
     ResearchSubquestion,
 )
 from rag.search import SearchResult
+from rag.web_search import WebSearchError, WebSearchResult
 
 
 def paper(arxiv_id: str, document: str) -> SearchResult:
@@ -27,7 +28,26 @@ class FakeReranker:
 
     def score(self, query: str, documents: list[str]) -> np.ndarray:
         weights = {"MCP evidence": 0.9, "Skill evidence": 0.8}
-        return np.asarray([weights[item] for item in documents])
+        return np.asarray([weights.get(item, 0.5) for item in documents])
+
+
+class FakeWebSearch:
+    def __init__(
+        self,
+        results: tuple[WebSearchResult, ...] = (),
+        error: Exception | None = None,
+    ) -> None:
+        self.queries: list[str] = []
+        self._results = results
+        self._error = error
+
+    def search(
+        self, query: str, *, max_results: int = 5
+    ) -> tuple[WebSearchResult, ...]:
+        self.queries.append(query)
+        if self._error is not None:
+            raise self._error
+        return self._results
 
 
 def test_research_agent_decomposes_comparison_and_combines_searches(
@@ -149,3 +169,152 @@ def test_research_agent_returns_grounded_refusal_after_search(
     assert "不足以可靠回答" in result.answer
     assert result.papers == ()
     assert result.trace[-1].stage == "agent_refusal"
+
+
+def test_research_agent_refines_terminology_with_web_search(
+    monkeypatch: object,
+) -> None:
+    subquestion = ResearchSubquestion("sq1", "Agent Skill 是什么？", "pending")
+    decisions = [
+        ResearchDecision(
+            question_type="single_fact",
+            reason_summary="skill 可能是产品术语，先用网页搜索确认学术叫法",
+            subquestions=(subquestion,),
+            next_action=ResearchAction("web_search", query="AI agent skill meaning"),
+        ),
+        ResearchDecision(
+            question_type="single_fact",
+            reason_summary="网页结果指向 tool use，用精确术语检索本地论文",
+            subquestions=(subquestion,),
+            next_action=ResearchAction(
+                "search_papers", "sq1", "LLM agent tool use skill library", 3
+            ),
+        ),
+        ResearchDecision(
+            question_type="single_fact",
+            reason_summary="论文证据已覆盖",
+            subquestions=(ResearchSubquestion("sq1", "Agent Skill 是什么？", "covered"),),
+            next_action=ResearchAction("finish"),
+        ),
+    ]
+    observed_budgets: list[tuple[int, int]] = []
+    observed_observations: list[list[dict[str, object]]] = []
+
+    def fake_decide(*args: object, **kwargs: object) -> ResearchDecision:
+        observed_budgets.append(
+            (kwargs["remaining_searches"], kwargs["remaining_web_searches"])  # type: ignore[arg-type]
+        )
+        observed_observations.append(list(kwargs["observations"]))  # type: ignore[arg-type]
+        return decisions.pop(0)
+
+    web = FakeWebSearch(
+        results=(
+            WebSearchResult(
+                title="Agent skills explained",
+                url="https://example.test/skills",
+                snippet="Agent skills package tool use instructions for LLM agents.",
+            ),
+        )
+    )
+    local_queries: list[str] = []
+
+    def fake_search(query: str, **kwargs: object) -> list[SearchResult]:
+        local_queries.append(query)
+        return [paper("SKILL", "Skill evidence")]
+
+    monkeypatch.setattr("rag.research_agent.decide_research_action", fake_decide)
+    monkeypatch.setattr("rag.research_agent.hybrid_search", fake_search)
+    monkeypatch.setattr(
+        "rag.research_agent.answer_from_results",
+        lambda *args, **kwargs: "grounded answer",
+    )
+
+    result = run_research_agent(
+        "Agent 的 skill 是什么？",
+        top_k=5,
+        collection=object(),  # type: ignore[arg-type]
+        embedder=object(),  # type: ignore[arg-type]
+        reranker=FakeReranker(),
+        settings=ModelSettings("key", "https://example.test", "model"),
+        web_search_client=web,
+    )
+
+    assert web.queries == ["AI agent skill meaning"]
+    assert local_queries == ["LLM agent tool use skill library"]
+    assert observed_budgets == [(4, 2), (3, 1), (2, 1)]
+    web_observation = observed_observations[1][0]
+    assert web_observation["tool"] == "web_search"
+    assert web_observation["result_count"] == 1
+    assert result.answer == "grounded answer"
+    assert result.retrieval_attempts == 1
+    assert {item.arxiv_id for item in result.papers} == {"SKILL"}
+    labels = [event.label for event in result.trace]
+    assert "Agent 调用网页搜索工具" in labels
+    assert "Agent 观察网页搜索结果" in labels
+
+
+def test_research_agent_treats_web_search_failure_as_observation(
+    monkeypatch: object,
+) -> None:
+    subquestion = ResearchSubquestion("sq1", "MCP 是什么？", "pending")
+    decisions = [
+        ResearchDecision(
+            question_type="single_fact",
+            reason_summary="先确认术语",
+            subquestions=(subquestion,),
+            next_action=ResearchAction("web_search", query="model context protocol"),
+        ),
+        ResearchDecision(
+            question_type="single_fact",
+            reason_summary="网页搜索失败，直接用现有术语检索本地论文",
+            subquestions=(subquestion,),
+            next_action=ResearchAction(
+                "search_papers", "sq1", "Model Context Protocol", 3
+            ),
+        ),
+        ResearchDecision(
+            question_type="single_fact",
+            reason_summary="论文证据已覆盖",
+            subquestions=(ResearchSubquestion("sq1", "MCP 是什么？", "covered"),),
+            next_action=ResearchAction("finish"),
+        ),
+    ]
+    observed_observations: list[list[dict[str, object]]] = []
+
+    def fake_decide(*args: object, **kwargs: object) -> ResearchDecision:
+        observed_observations.append(list(kwargs["observations"]))  # type: ignore[arg-type]
+        return decisions.pop(0)
+
+    monkeypatch.setattr("rag.research_agent.decide_research_action", fake_decide)
+    monkeypatch.setattr(
+        "rag.research_agent.hybrid_search",
+        lambda *args, **kwargs: [paper("MCP", "MCP evidence")],
+    )
+    monkeypatch.setattr(
+        "rag.research_agent.answer_from_results",
+        lambda *args, **kwargs: "grounded answer",
+    )
+
+    result = run_research_agent(
+        "MCP 是什么？",
+        top_k=5,
+        collection=object(),  # type: ignore[arg-type]
+        embedder=object(),  # type: ignore[arg-type]
+        reranker=FakeReranker(),
+        settings=ModelSettings("key", "https://example.test", "model"),
+        web_search_client=FakeWebSearch(
+            error=WebSearchError("web search returned HTTP 500")
+        ),
+    )
+
+    assert result.answer == "grounded answer"
+    assert result.retrieval_attempts == 1
+    failure_observation = observed_observations[1][0]
+    assert failure_observation["tool"] == "web_search"
+    assert "HTTP 500" in str(failure_observation["error"])
+    failed_events = [
+        event
+        for event in result.trace
+        if event.label == "网页搜索工具执行失败" and event.status == "failed"
+    ]
+    assert len(failed_events) == 1

@@ -15,6 +15,7 @@ from rag.embedder import E5Embedder
 from rag.keyword_search import DEFAULT_DATABASE_PATH, ensure_keyword_index
 from rag.reranker import CrossEncoderReranker, Reranker
 from rag.vector_store import get_persistent_collection
+from rag.web_search import WebSearchClient, load_web_search_client
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,7 @@ class RagRuntime:
     reranker: Reranker
     settings: ModelSettings
     database_path: Path = DEFAULT_DATABASE_PATH
+    web_search_client: WebSearchClient | None = None
 
 
 def load_rag_runtime() -> RagRuntime:
@@ -36,4 +38,5 @@ def load_rag_runtime() -> RagRuntime:
         embedder=E5Embedder(),
         reranker=CrossEncoderReranker(),
         settings=ModelSettings.from_env(),
+        web_search_client=load_web_search_client(),
     )

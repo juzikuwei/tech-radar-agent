@@ -20,9 +20,11 @@ from rag.research_plan import (
     decide_research_action,
 )
 from rag.search import QueryEmbedder, SearchResult
+from rag.web_search import WebSearchClient, WebSearchError
 
 
 MAX_RESEARCH_ACTIONS = 4
+MAX_WEB_SEARCHES = 2
 OBSERVATION_PAPER_LIMIT = 5
 OBSERVATION_EXCERPT_LIMIT = 300
 
@@ -59,6 +61,7 @@ def run_research_agent(
     active_evidence: tuple[SearchResult, ...] = (),
     on_trace: TraceEventCallback | None = None,
     max_actions: int = MAX_RESEARCH_ACTIONS,
+    web_search_client: WebSearchClient | None = None,
 ) -> RagResult:
     """Let the model plan bounded searches, then generate one grounded answer."""
     clean_question = question.strip()
@@ -73,21 +76,28 @@ def run_research_agent(
     history = bounded_history(conversation_history)
     evidence_by_id = {paper.arxiv_id: paper for paper in active_evidence}
     observations: list[SearchObservation] = []
+    observation_payloads: list[dict[str, object]] = []
     plan: tuple[ResearchSubquestion, ...] = ()
     search_count = 0
+    web_search_count = 0
 
     while True:
-        remaining_searches = max_actions - search_count
+        remaining_actions = max_actions - search_count - web_search_count
+        remaining_web_searches = min(
+            MAX_WEB_SEARCHES - web_search_count, remaining_actions
+        )
         started_at = start_timer()
         try:
             decision = decide_research_action(
                 clean_question,
                 history=history,
                 evidence=tuple(evidence_by_id.values()),
-                observations=[_observation_payload(item) for item in observations],
+                observations=list(observation_payloads),
                 previous_plan=plan,
-                remaining_searches=remaining_searches,
+                remaining_searches=remaining_actions,
                 search_count=search_count,
+                remaining_web_searches=remaining_web_searches,
+                web_search_available=web_search_client is not None,
                 settings=settings,
                 client=client,
                 on_retry=on_retry,
@@ -98,7 +108,10 @@ def run_research_agent(
                 label="研究 Agent 规划失败",
                 status="failed",
                 started_at=started_at,
-                details={"error": str(error), "round": search_count + 1},
+                details={
+                    "error": str(error),
+                    "round": search_count + web_search_count + 1,
+                },
             )
             raise ResearchAgentError(str(error), trace.events) from error
 
@@ -121,11 +134,22 @@ def run_research_agent(
                 ],
                 "next_action": decision.next_action.type,
                 "target_subquestion_id": decision.next_action.target_subquestion_id,
-                "remaining_searches": remaining_searches,
+                "remaining_searches": remaining_actions,
+                "remaining_web_searches": remaining_web_searches,
             },
         )
 
         action = decision.next_action
+        if action.type == "web_search":
+            web_search_count += 1
+            _run_web_search(
+                action.query or "",
+                web_search_client=web_search_client,
+                observation_payloads=observation_payloads,
+                trace=trace,
+            )
+            continue
+
         if action.type == "search_papers":
             trace.record(
                 stage="agent_tool_call",
@@ -170,6 +194,7 @@ def run_research_agent(
                 papers=tuple(papers),
             )
             observations.append(observation)
+            observation_payloads.append(_observation_payload(observation))
             for paper in papers:
                 evidence_by_id.setdefault(paper.arxiv_id, paper)
             trace.record(
@@ -353,8 +378,80 @@ def _select_final_evidence(
     return selected
 
 
+def _run_web_search(
+    query: str,
+    *,
+    web_search_client: WebSearchClient | None,
+    observation_payloads: list[dict[str, object]],
+    trace: TraceRecorder,
+) -> None:
+    """Run one auxiliary web search whose failure is an observation, not an abort."""
+    trace.record(
+        stage="agent_tool_call",
+        label="Agent 调用网页搜索工具",
+        details={"tool": "web_search", "query": query},
+    )
+    tool_started_at = start_timer()
+    if web_search_client is None:
+        error_message = "web search tool is not configured"
+        results = None
+    else:
+        try:
+            results = web_search_client.search(query)
+            error_message = None
+        except (WebSearchError, ValueError) as error:
+            results = None
+            error_message = str(error)
+
+    if results is None:
+        observation_payloads.append(
+            {
+                "tool": "web_search",
+                "query": query,
+                "result_count": 0,
+                "error": error_message,
+            }
+        )
+        trace.record(
+            stage="agent_tool_observation",
+            label="网页搜索工具执行失败",
+            status="failed",
+            started_at=tool_started_at,
+            details={
+                "tool": "web_search",
+                "query": query,
+                "error": error_message,
+            },
+        )
+        return
+
+    observation_payloads.append(
+        {
+            "tool": "web_search",
+            "query": query,
+            "result_count": len(results),
+            "results": [
+                {"title": item.title, "snippet": item.snippet} for item in results
+            ],
+        }
+    )
+    trace.record(
+        stage="agent_tool_observation",
+        label="Agent 观察网页搜索结果",
+        started_at=tool_started_at,
+        details={
+            "tool": "web_search",
+            "query": query,
+            "result_count": len(results),
+            "result_titles": [item.title for item in results],
+            "result_urls": [item.url for item in results],
+        },
+    )
+
+
 def _observation_payload(observation: SearchObservation) -> dict[str, object]:
     return {
+        "tool": "search_papers",
         "target_subquestion_id": observation.subquestion_id,
         "query": observation.query,
         "result_count": len(observation.papers),

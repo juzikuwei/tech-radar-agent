@@ -1187,7 +1187,7 @@ repeatable quality comparisons.
 
 ## ADR-024: Defer full answer reflection and prioritize a weekly radar output
 
-- **Status:** Accepted
+- **Status:** Accepted; weekly-report prioritization superseded by ADR-025
 - **Date:** 2026-07-13
 
 **Decision**
@@ -1244,3 +1244,85 @@ Add answer reflection after repeated unsupported claims or invalid citations.
 Introduce LangGraph when the workflow needs interruption, resumability,
 parallel branches, or approval. Introduce Supervisor-Worker reporting after a
 working single-Agent report exposes a measurable coordination problem.
+
+---
+
+## ADR-025: Add a query-shaping web_search tool to the research agent
+
+- **Status:** Accepted
+- **Date:** 2026-07-13
+
+**Decision**
+
+Give the ReAct research agent one additional in-process tool, `web_search`,
+backed by the Tavily REST API behind a small `WebSearchClient` protocol. The
+tool exists only to turn vague, very new, or product-flavored terminology into
+precise English queries for the local paper search. Web results are untrusted:
+they are truncated to at most five title-and-snippet pairs, never enter the
+answer prompt, never become citable evidence, and cannot mark a subquestion as
+covered. Allow at most two web searches per request inside the existing
+four-action budget. A failed web search becomes a tool observation that the
+model sees, not an abort. The tool is disabled automatically when
+`TAVILY_API_KEY` is absent from the environment. This decision also supersedes
+the weekly-report prioritization in ADR-024: the project refocuses on
+practicing agent capabilities, and the radar report is deferred.
+
+Live verification also hardened the decision contract deterministically: model
+rewrites of subquestion text are normalized back to the original text (the id
+is the stable goal), searching a subquestion marked covered downgrades it to
+pending instead of failing the run, and every decision request now receives an
+explicit `allowed_actions` list computed from the remaining budgets so
+exhausted tools disappear from the model's menu.
+
+**Context**
+
+The corpus is English arXiv abstracts while real questions contain product
+terms such as `skill` and very new acronyms that embedding retrieval cannot
+match and the model's training data may predate. The ReAct loop previously had
+one tool, so the model never practiced choosing between tools. The user
+dropped the weekly-report product goal in favor of agent-skill practice. Three
+consecutive live runs each exposed a different contract violation (plan text
+rewrites, covered-target searches, budget-exhausted tool insistence), showing
+that negative prompt rules alone do not control the model reliably.
+
+**Alternatives considered**
+
+- Wrap the three MCP read-only tools as in-process tools: satisfies the
+  original stage-9 checklist, but adds no genuinely new capability, so tool
+  selection stays trivial.
+- A fixed chain (web search, keyword extraction, LLM validation, retrieval):
+  the user's first sketch, but it rebuilds a pipeline inside the agent loop;
+  the ReAct decision step already is the judgment.
+- A PDF full-text reading tool: deepens evidence rather than recall, deferred
+  per ADR-022 until traces show abstracts are the binding constraint.
+- No new tool: the model already knows pre-cutoff terminology, but fails
+  exactly on the fast-moving vocabulary this project tracks.
+
+**Reason**
+
+A heterogeneous external tool with real latency, failure modes, and untrusted
+output is the smallest change that makes tool selection, tool-failure
+handling, and injection surfaces real. Restricting it to query shaping keeps
+the grounding contract intact: facts still come only from local abstracts.
+
+**Consequences**
+
+- The runtime gains an optional external dependency, one environment variable,
+  and up to two extra network calls per ReAct request.
+- Untrusted web snippets now flow into decision prompts, creating a concrete
+  indirect-prompt-injection surface that stage 14 guardrails must address.
+- Contract violations that are safe to correct are now normalized in code;
+  only genuinely ambiguous violations still fail to the pipeline fallback.
+- The live acceptance run completed the intended loop: the model chose
+  web_search for `mcp 和 skill 是什么？`, refined the query to `Model Context
+  Protocol MCP agent skill`, retrieved five local papers, and answered citing
+  only those papers.
+- Tavily's free tier (1,000 calls/month) bounds cost; the protocol keeps the
+  backend swappable.
+
+**Review or migration trigger**
+
+Revisit if web snippets ever need to become citable evidence (requires new
+guardrails and provenance), if Tavily reachability or quota degrades (swap the
+`WebSearchClient` backend), or when stage 14 adds input filtering that should
+also wrap web observations.

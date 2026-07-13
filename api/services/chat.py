@@ -67,6 +67,7 @@ def execute_chat(
                 conversation_history=history,
                 active_evidence=active_evidence,
                 on_trace=on_trace,
+                web_search_client=runtime.web_search_client,
             )
         except Exception as error:
             LOGGER.warning("Research Agent failed; falling back to pipeline: %s", error)
