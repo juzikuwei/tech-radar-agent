@@ -6,7 +6,9 @@ import pytest
 
 from ingestion.repository import (
     SnapshotImportError,
+    get_paper_count,
     import_jsonl_snapshot,
+    load_papers_by_arxiv_ids,
     load_papers_for_embedding,
 )
 from ingestion.snapshot import write_jsonl_snapshot
@@ -192,3 +194,28 @@ def test_load_papers_for_embedding_returns_current_normalized_text(tmp_path: Pat
     assert papers[0]["arxiv_id"] == "2607.00001"
     assert papers[0]["title"] == "Normalized title"
     assert papers[0]["abstract"] == "Normalized abstract"
+
+
+def test_loads_requested_papers_in_id_order_and_reports_count(tmp_path: Path) -> None:
+    database_path = tmp_path / "papers.db"
+    snapshot_path = tmp_path / "papers.jsonl"
+    write_snapshot(
+        snapshot_path,
+        [
+            make_record(arxiv_id="2607.00001", title="First paper"),
+            make_record(arxiv_id="2607.00002", title="Second paper"),
+        ],
+    )
+    import_jsonl_snapshot(snapshot_path, database_path)
+
+    papers = load_papers_by_arxiv_ids(
+        database_path,
+        ["2607.00002", "2607.00001", "2607.99999"],
+    )
+
+    assert [paper["arxiv_id"] for paper in papers] == [
+        "2607.00002",
+        "2607.00001",
+    ]
+    assert papers[0]["title"] == "Second paper"
+    assert get_paper_count(database_path) == 2

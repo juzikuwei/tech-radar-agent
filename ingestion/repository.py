@@ -1,5 +1,6 @@
 """SQLite current-state storage for normalized paper records."""
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 import json
@@ -82,6 +83,48 @@ def load_papers_for_embedding(database_path: Path) -> list[dict[str, str]]:
             """
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+def load_papers_by_arxiv_ids(
+    database_path: Path,
+    arxiv_ids: Sequence[str],
+) -> list[dict[str, str]]:
+    """Load normalized papers in the same order as the requested IDs."""
+    clean_ids = [arxiv_id.strip() for arxiv_id in arxiv_ids]
+    if any(not arxiv_id for arxiv_id in clean_ids):
+        raise ValueError("arxiv_ids must contain only non-empty strings")
+    if not clean_ids:
+        return []
+    if not database_path.exists():
+        raise FileNotFoundError(f"database not found: {database_path}")
+
+    placeholders = ", ".join("?" for _ in clean_ids)
+    with sqlite3.connect(database_path) as connection:
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            f"""
+            SELECT arxiv_id, title, abstract, entry_url, pdf_url,
+                   primary_category, published_at, updated_at
+            FROM papers
+            WHERE arxiv_id IN ({placeholders})
+            """,
+            clean_ids,
+        ).fetchall()
+
+    papers_by_id = {str(row["arxiv_id"]): dict(row) for row in rows}
+    return [
+        papers_by_id[arxiv_id]
+        for arxiv_id in clean_ids
+        if arxiv_id in papers_by_id
+    ]
+
+
+def get_paper_count(database_path: Path) -> int:
+    """Return the number of normalized papers in the local current state."""
+    if not database_path.exists():
+        raise FileNotFoundError(f"database not found: {database_path}")
+    with sqlite3.connect(database_path) as connection:
+        return int(connection.execute("SELECT COUNT(*) FROM papers").fetchone()[0])
 
 
 def _import_snapshot_lines(
