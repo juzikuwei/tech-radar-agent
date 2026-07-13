@@ -251,7 +251,7 @@ Revisit the vector store when corpus size, concurrent access, filtering needs, o
 
 ## ADR-007: Separate answerable retrieval metrics from refusal analysis
 
-- **Status:** Accepted
+- **Status:** Superseded by ADR-023
 - **Date:** 2026-07-11
 
 **Decision**
@@ -681,7 +681,7 @@ conversation branches make the current bounded loop difficult to inspect.
 
 ## ADR-016: Evaluate Agent control actions without an additional Judge model
 
-- **Status:** Accepted
+- **Status:** Superseded by ADR-023
 - **Date:** 2026-07-12
 
 **Decision**
@@ -740,3 +740,507 @@ Add a carefully reviewed LLM-as-a-Judge layer when the project begins scoring
 answer completeness, groundedness, or refusal quality that cannot be checked
 with deterministic fields. Keep deterministic action checks as guardrails even
 after semantic judging is introduced.
+
+---
+
+## ADR-017: Add a thin FastAPI boundary before replacing Streamlit
+
+- **Status:** Accepted
+- **Date:** 2026-07-12
+
+**Decision**
+
+Expose the existing `run_rag` application service through FastAPI before
+building a separate React frontend. Keep Streamlit available during migration.
+Load SQLite, ChromaDB, the embedder, and the reranker once during API process
+startup. The first `/chat` contract is synchronous and accepts at most six
+completed turns plus at most five active arXiv IDs. The server reloads those
+papers from SQLite instead of accepting client-provided evidence text.
+
+**Context**
+
+The RAG and conversational Agent behavior now have repeatable offline tests and
+a real terminal evaluation baseline. Streamlit currently owns presentation,
+session state, and direct in-process calls to `run_rag`, which prevents another
+frontend from using the same backend contract. Replacing the UI and adding an
+API in one change would make failures harder to localize.
+
+**Alternatives considered**
+
+- Continue with Streamlit only: fastest for experiments, but keeps UI and
+  backend process boundaries coupled.
+- Replace Streamlit directly with a Next.js full-stack application: provides a
+  polished web stack, but duplicates backend responsibilities already owned by
+  Python and changes too many boundaries at once.
+- Add FastAPI and immediately introduce server-side session storage: hides
+  state from clients, but adds lifecycle, persistence, and multi-worker design
+  before they are required.
+- Add a thin stateless FastAPI boundary first: creates a testable contract while
+  preserving the existing application logic.
+
+**Reason**
+
+FastAPI gives React or any future client one explicit HTTP boundary without
+moving retrieval, model, or conversation decisions out of `rag/application.py`.
+Reloading active evidence by trusted IDs preserves the rule that only local
+papers may become factual context.
+
+**Consequences**
+
+- FastAPI and Streamlit temporarily coexist.
+- API tests can inject a lightweight runtime and remain offline.
+- One API worker is recommended initially because each worker would otherwise
+  load another copy of the local embedding and reranking models.
+- Client conversation history is bounded but not persisted across devices.
+- The first response is non-streaming, so users wait for the complete answer.
+- CORS, authentication, streaming, and durable sessions remain out of scope.
+
+**Review or migration trigger**
+
+Add SSE streaming when complete-response latency harms the React experience.
+Introduce durable server-side conversation state when sessions must survive
+refreshes, be shared across devices, or cannot be trusted to the client. Retire
+Streamlit only after the React client covers chat, citations, traces, reset, and
+error handling.
+
+---
+
+## ADR-018: Use React, TypeScript, and Vite for the separate web client
+
+- **Status:** Accepted
+- **Date:** 2026-07-12
+
+**Decision**
+
+Build the separate browser client with React 19, TypeScript, and Vite. Keep the
+client as a single-page application that calls FastAPI directly. Store visible
+conversation turns and the previous response's arXiv IDs in browser memory.
+Send only the last six completed turns and at most five evidence IDs on each
+request. Render model answers as escaped Markdown and keep Streamlit available
+as a temporary internal debugging interface.
+
+**Context**
+
+The FastAPI boundary is working against the real local models and stores. The
+next limitation is Streamlit's combined UI and Python runtime, which makes it
+difficult to build a responsive chat layout and independently evolve frontend
+interaction. The product is currently a local research assistant, not a public
+content website requiring SEO or server-rendered pages.
+
+**Alternatives considered**
+
+- Continue extending Streamlit: minimizes new technology, but retains the
+  coupled frontend runtime and limited interaction model.
+- Use Next.js: provides routing and server rendering, but duplicates server
+  responsibilities already owned by FastAPI and adds complexity without a
+  current SEO or full-stack hosting requirement.
+- Use another Python UI framework: avoids TypeScript, but does not establish a
+  conventional independent web-client boundary.
+- Use React with Vite: provides a small SPA toolchain and keeps all backend
+  behavior in FastAPI and Python.
+
+**Reason**
+
+React supports the required chat, evidence cards, expandable traces, loading
+states, and responsive layout without moving domain logic into the browser.
+TypeScript makes the FastAPI response contract explicit, while Vite provides a
+minimal development and production build path.
+
+**Consequences**
+
+- Node.js and npm become development dependencies for the frontend.
+- Browser refresh currently clears conversation state.
+- FastAPI allows only the two local Vite origins during development.
+- Complete answers remain synchronous; the UI displays a loading state during
+  retrieval, judgment, reranking, and generation.
+- The frontend API base URL can be changed with `VITE_API_BASE_URL` in an
+  ignored `frontend/.env.local` file.
+- Streamlit and React temporarily coexist until browser acceptance is complete.
+
+**Review or migration trigger**
+
+Add client routing or reconsider Next.js when the product needs public pages,
+authentication flows, or server rendering. Add durable server-side sessions
+when conversations must survive refreshes or move across devices. Add SSE when
+real user tests show that complete-response latency makes the loading-only
+experience unacceptable.
+
+---
+
+## ADR-019: Retire the Streamlit interface after React acceptance
+
+- **Status:** Accepted
+- **Date:** 2026-07-12
+
+**Decision**
+
+Delete the old Python UI modules and remove Streamlit from runtime dependencies.
+Use React as the only user-facing web client and FastAPI as its backend
+boundary. Preserve earlier ADR entries as migration history rather than
+rewriting them.
+
+**Context**
+
+The React client now covers question input, multi-turn state, trusted evidence
+IDs, Markdown answers, paper links, Agent traces, loading states, errors, and
+conversation reset. Component tests, production builds, a real two-turn API
+flow, CORS, and a desktop browser screenshot all passed. Keeping a second UI
+would create duplicate presentation behavior and two places to debug state.
+
+**Alternatives considered**
+
+- Keep the Python UI as a permanent admin console: provides a fallback, but no
+  current admin-only behavior justifies the duplicate dependency and code path.
+- Keep the files but stop documenting them: makes rollback easy, but leaves
+  unused code that can drift and confuse future changes.
+- Remove the old interface now: leaves one frontend contract and one supported
+  user experience.
+
+**Reason**
+
+The migration acceptance criteria have been met. The execution trace and RAG
+behavior are already exposed through typed API responses, so the old interface
+no longer owns a unique capability.
+
+**Consequences**
+
+- React on port 5173 is the supported local UI.
+- FastAPI on port 8000 is required for browser use.
+- Python installation no longer includes the UI framework dependency.
+- UI changes and tests now live under `frontend/`.
+- Historical architecture entries still describe the previous migration state.
+
+**Review or migration trigger**
+
+Add a separate administration interface only when ingestion, evaluation, or
+operations require capabilities that do not belong in the user-facing React
+client. Build that interface against FastAPI instead of coupling it directly to
+Python application objects.
+
+---
+
+## ADR-020: Expose compact read-only tools over Streamable HTTP MCP
+
+- **Status:** Accepted
+- **Date:** 2026-07-12
+
+**Decision**
+
+Run a separate stateless Streamable HTTP MCP service at `/mcp`. Protect it with
+an interim Bearer Token boundary and DNS-rebinding Host validation. Load one
+shared lazy RAG runtime per MCP process. Expose only three read-only tools:
+compact knowledge-base search, paper lookup by arXiv ID, and knowledge-base
+counts. Keep FastAPI and MCP as peer adapters over shared `rag/` services.
+
+**Context**
+
+The website already serves human users through React and FastAPI. The next
+horizontal capability is allowing Agents on other computers to use the local
+arXiv knowledge base. Returning complete internal search objects would expose
+irrelevant scores, traces, paths, and large texts while increasing bandwidth
+and making the public contract difficult to change.
+
+**Alternatives considered**
+
+- Use stdio MCP: simplest locally, but cannot directly serve remote clients and
+  may load one model runtime per client process.
+- Use the legacy HTTP plus SSE transport: maintains compatibility with older
+  clients, but new development should use Streamable HTTP.
+- Make MCP call FastAPI over HTTP: avoids a shared service refactor, but adds an
+  unnecessary network hop and couples two adapters.
+- Return full `SearchResult` and database rows: easier initially, but leaks
+  internal fields and creates an unstable oversized contract.
+
+**Reason**
+
+Streamable HTTP supports the planned VPS and domain deployment while sharing one
+model runtime across clients. Compact tool-specific payloads provide enough
+evidence for an external Agent to cite papers without exposing implementation
+details. Stateless sessions keep the first remote deployment simple.
+
+**Consequences**
+
+- Search returns at most five papers and truncates each abstract excerpt to 600
+  characters.
+- Full normalized abstracts are available only through explicit paper lookup.
+- Tools cannot modify data, trigger ingestion, or call the answer model.
+- `MCP_AUTH_TOKEN` is required and is never committed.
+- Static Bearer Tokens are suitable only for development and limited access;
+  public onboarding requires OAuth 2.1, per-user revocation, and rate limits.
+- The MCP process listens on port 8100 by default and should remain behind an
+  HTTPS reverse proxy in production.
+
+**Review or migration trigger**
+
+Replace static tokens when access is offered to untrusted or self-registering
+users. Add stateful sessions only when a tool needs resumable server-side work.
+Add write tools only after defining authorization, audit logging, quotas, and a
+separate approval boundary.
+
+---
+
+## ADR-021: Stream completed Trace events before the final chat result
+
+- **Status:** Accepted
+- **Date:** 2026-07-12
+
+**Decision**
+
+Keep the existing synchronous `POST /chat` contract and add
+`POST /chat/stream` using newline-delimited JSON. Send one immediate
+`run_started` event, one `trace` event whenever the shared `TraceRecorder`
+records a completed or failed stage, and one terminal `result` or `error`
+event. Stream execution visibility only; return the final model answer as one
+complete value rather than token streaming.
+
+**Context**
+
+Real requests can include dense retrieval, keyword retrieval, rank fusion,
+Cross-encoder reranking, DeepSeek retrieval judgment, a second retrieval, and
+answer generation. The React client previously displayed only a generic
+loading state until all stages finished, even though structured Trace events
+were already recorded during execution. Users need to see factual progress
+without exposing private chain-of-thought or changing the answer-generation
+contract.
+
+**Alternatives considered**
+
+- Keep a loading animation until `/chat` finishes: simplest, but hides the
+  Agent's actual work and makes normal latency look like a stalled request.
+- Stream answer tokens as well as Trace events: provides earlier prose, but
+  adds answer assembly, Markdown-boundary, cancellation, and partial-citation
+  complexity that is not currently required.
+- Use WebSockets: supports bidirectional sessions, but one request produces one
+  ordered response and does not need a persistent duplex connection.
+- Use native browser `EventSource`: standardizes SSE reconnect behavior, but it
+  does not directly support the required POST JSON request body.
+- Use NDJSON over `fetch`: keeps the POST contract, frames each typed event as
+  complete JSON, and is small enough to parse without another dependency.
+
+**Reason**
+
+NDJSON provides the smallest explicit protocol for incremental Trace delivery.
+An optional callback on the existing recorder guarantees that streamed events
+and the final stored trace come from the same source. The final response still
+contains the complete trace, so synchronous clients, MCP, tests, and error
+inspection remain compatible.
+
+**Consequences**
+
+- The browser displays completed stages incrementally and shows a pending next
+  step until the final result arrives.
+- Completed Trace details remain available in a collapsed summary above the
+  answer; paper evidence is collapsed by default below it.
+- The streaming endpoint runs the synchronous RAG pipeline in a producer
+  thread and passes bounded events through a queue.
+- Resetting the browser conversation aborts client consumption, but work
+  already running in a provider or local model may finish server-side.
+- Reverse proxies must not buffer the stream; the endpoint sends
+  `X-Accel-Buffering: no` and `Cache-Control: no-transform`.
+- Stream errors are terminal protocol events because headers may already have
+  been sent with HTTP 200.
+
+**Review or migration trigger**
+
+Add answer-token streaming only when real usage shows that final generation
+latency still harms the experience. Reconsider SSE or WebSockets when automatic
+reconnection, server-initiated updates, resumable jobs, or bidirectional tool
+approval becomes necessary.
+
+---
+
+## ADR-022: Add a bounded research ReAct mode beside the reliable pipeline
+
+- **Status:** Accepted
+- **Date:** 2026-07-12
+
+**Decision**
+
+Add an optional `react` chat mode while retaining the existing `pipeline`
+mode. In ReAct mode, DeepSeek returns a validated research plan containing one
+to four evidence requirements and selects one action per round:
+`search_papers`, `finish`, or `refuse`. The search action calls the existing
+in-process hybrid retrieval stack and returns bounded observations to the next
+model decision. Allow at most four searches, generate the final answer with the
+existing grounded answer prompt, and fall back to the pipeline if planning or
+tool execution fails.
+
+**Context**
+
+The fixed pipeline embeds one query and can rewrite it once, but it does not
+explicitly decompose comparison or multi-hop questions. A question can require
+separate evidence about two concepts even when no single abstract directly
+compares them. The project already has modular retrieval, structured JSON model
+decisions, grounded generation, real-time Trace delivery, and a tested pipeline
+baseline.
+
+**Alternatives considered**
+
+- Add a one-time deterministic query decomposition workflow: improves recall,
+  but the model cannot react to the evidence returned by each subquery.
+- Force three or four searches for every question: creates visible activity,
+  but wastes latency and tokens on simple questions and encourages duplicate
+  evidence.
+- Replace the pipeline with ReAct: simplifies the public choice, but removes the
+  reliable baseline needed for fallback and quantitative comparison.
+- Call the external MCP server from the internal Agent: reuses a protocol, but
+  adds transport, authentication, and process overhead inside one application.
+- Add LangGraph immediately: provides loop and state abstractions, but plain
+  bounded Python remains inspectable at the current number of actions.
+
+**Reason**
+
+The model should decide what evidence is missing, while deterministic code
+should retain the action set, parameter bounds, search implementation, maximum
+steps, JSON validation, and fallback behavior. Reusing the hybrid search
+function keeps model autonomy at the semantic level without exposing low-level
+retrieval weights or duplicating MCP infrastructure.
+
+**Consequences**
+
+- The React client defaults to research Agent mode and lets users switch back
+  to the reliable pipeline.
+- The first decision produces both a visible research plan and the first
+  action; later decisions keep stable subquestion IDs and update coverage.
+- Search queries and `top_k` are model-selected, but `top_k` is restricted to
+  one through five.
+- Trace events distinguish planning, tool calls, observations, finish,
+  refusal, and pipeline fallback while preserving lower-level retrieval spans.
+- The final evidence selector keeps representation from separately searched
+  subquestions before filling remaining slots by global rerank score.
+- ReAct can make more model calls and take longer than the pipeline. Token usage
+  comparison remains required before claiming a quality-efficiency win.
+- The first internal Agent exposes only paper search. Batch paper reading and
+  other tools should be added only when real Trace inspection demonstrates a
+  concrete need.
+
+**Review or migration trigger**
+
+Revisit the action set after real multi-hop runs expose failures that search
+alone cannot solve. Add cumulative token accounting to make individual Trace
+runs easier to understand. Introduce LangGraph only when additional tools,
+resumable actions, parallel branches, or human approval make the plain loop
+difficult to reason about.
+
+---
+
+## ADR-023: Pause the standalone evaluation subsystem
+
+- **Status:** Accepted
+- **Date:** 2026-07-13
+
+**Decision**
+
+Remove the standalone `eval/` scripts, human-labeled retrieval datasets,
+generated baseline reports, and their dedicated unit tests. Keep production
+unit tests and use the existing per-request Trace plus a small number of real
+questions for current manual inspection. Do not add an LLM Judge, RAGAS, or
+DeepEval at the current project scale.
+
+**Context**
+
+The evaluation assets were created when the project had a much smaller corpus
+and an earlier fixed pipeline. Maintaining paper relevance labels now requires
+manual retrieval review whenever the corpus or retrieval stack changes. The
+current project is a personal learning system, and its React Trace already
+shows retrieval rounds, model decisions, tool calls, observations, fallbacks,
+durations, and selected evidence for direct inspection.
+
+**Alternatives considered**
+
+- Refresh and expand the labeled datasets: preserves comparable metrics, but
+  creates ongoing annotation work disproportionate to the current project.
+- Add an LLM Judge: reduces some manual review, but introduces extra cost,
+  nondeterminism, and another model whose decisions need inspection.
+- Keep the unused evaluation files: preserves optional tooling, but leaves a
+  stale subsystem that appears authoritative while no longer matching the
+  production Agent.
+- Remove the subsystem and rely on Trace for now: reduces maintenance while
+  keeping the actual execution path observable.
+
+**Reason**
+
+At the current scale, understanding individual Agent runs provides more
+learning value than maintaining a small benchmark whose labels quickly become
+stale. Trace inspection is already part of the product and requires no second
+grading pipeline.
+
+**Consequences**
+
+- The repository no longer reports Precision, Recall, MRR, action accuracy, or
+  pipeline-versus-ReAct benchmark numbers.
+- Trace inspection can explain behavior but does not prove broad correctness or
+  prevent regressions across many questions.
+- Production behavior remains covered by offline pytest tests with mocked model
+  and retrieval boundaries.
+- Token usage and estimated cost may be added later when request cost or
+  latency becomes a concrete concern.
+
+**Review or migration trigger**
+
+Reintroduce a small automated evaluation suite when the project gains multiple
+users or data sources, prompt and model changes become frequent, regressions
+are difficult to notice from individual traces, or a deployment decision needs
+repeatable quality comparisons.
+
+---
+
+## ADR-024: Defer full answer reflection and prioritize a weekly radar output
+
+- **Status:** Accepted
+- **Date:** 2026-07-13
+
+**Decision**
+
+Do not add a separate LLM reflection call after every generated answer at the
+current project scale. Treat the existing ReAct observation loop as sufficient
+process reflection for now. Also defer LangGraph while the handwritten loop has
+one tool, bounded searches, and a clear pipeline fallback. Prioritize a
+single-Agent technical radar weekly report as the next product capability, and
+introduce Supervisor-Worker collaboration only after the single-Agent version
+exposes a concrete limitation.
+
+**Context**
+
+The research Agent already decomposes questions, observes each retrieval,
+updates evidence coverage, and chooses to search again, finish, or refuse. A
+post-generation reviewer would add another model call to every answer without
+current evidence of recurring citation or overclaim failures. LangGraph would
+replace readable bounded Python without yet providing interruption, parallel
+branches, resumable work, or human approval. The project is named a technical
+radar assistant, but it does not yet produce a reusable radar artifact.
+
+**Alternatives considered**
+
+- Add full answer reflection now: teaches the pattern, but increases latency
+  and cost before a real output-quality problem has been observed.
+- Refactor to LangGraph next: introduces a mainstream framework, but the
+  current orchestration is not difficult to maintain.
+- Build multi-Agent weekly reporting immediately: demonstrates collaboration,
+  but provides no single-Agent baseline showing that multiple Agents are
+  necessary.
+- Build a single-Agent weekly report first: creates a tangible product output
+  while reusing the current retrieval and grounded generation boundaries.
+
+**Reason**
+
+New abstractions and model calls should solve observed limitations. A weekly
+report advances the product directly and can later provide the concrete task
+that justifies reflection, LangGraph, or multi-Agent coordination.
+
+**Consequences**
+
+- Final generated prose is not reviewed by a second LLM call.
+- Reflection remains an optional learning extension or a response to repeated
+  citation and overclaim failures.
+- The first weekly-report implementation must remain single-Agent and must not
+  duplicate retrieval logic.
+- A multi-Agent version requires evidence that topic decomposition, context
+  size, or aggregation quality is limiting the single-Agent version.
+
+**Review or migration trigger**
+
+Add answer reflection after repeated unsupported claims or invalid citations.
+Introduce LangGraph when the workflow needs interruption, resumability,
+parallel branches, or approval. Introduce Supervisor-Worker reporting after a
+working single-Agent report exposes a measurable coordination problem.

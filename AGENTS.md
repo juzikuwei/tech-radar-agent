@@ -2,13 +2,7 @@
 
 ## Project Structure & Module Organization
 
-`first.md` defines scope, architecture, and milestones. Create modules only when required:
-
-- `ingestion/`: arXiv pipeline; `rag/`: retrieval and generation.
-- `app/`: Streamlit UI; `config/`: runtime settings.
-- `tests/`: pytest tests; `docs/`: decisions and technical notes.
-
-Keep generated data untracked except for small fixtures; never commit `.venv/`.
+`first.md` defines scope, architecture, milestones, and the directory layout (section 8). Create modules only when required. Keep generated data untracked except for small fixtures; never commit `.venv/`.
 
 ## Build, Test, and Development Commands
 
@@ -18,10 +12,17 @@ Run from the repository root in PowerShell:
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
 python -m pytest
-streamlit run app/streamlit_app.py
+python -m uvicorn api.main:app --reload
+python -m mcp_server.main
+cd frontend
+npm install
+npm test
+npm run build
+npm run dev
 ```
 
-Prefer `python -m ...` so tools use the active interpreter.
+Prefer `python -m ...` so Python tools use the active interpreter. Run frontend
+commands from `frontend/`.
 
 ## Coding Style & Naming Conventions
 
@@ -47,6 +48,8 @@ Keep keys in the ignored `.env` file and never commit secrets, databases, vector
 
 ## Agent-Specific Learning Instructions
 
-Use teaching-oriented co-development. Before coding, explain the concept and one runnable goal. Let the user implement or execute meaningful parts, then review results and failures. Do not generate the whole project or jump to LangGraph or MCP unless requested; connect additions to limitations already observed.
+Use teaching-oriented co-development. Before coding, explain the concept and one runnable goal. Let the user implement or execute meaningful parts, then review results and failures. Do not generate the whole project; connect additions to limitations already observed.
+
+For the extension stages in `first.md` (stage 9+), never start implementing a stage without first explaining its concept, runnable goal, and change scope, and receiving explicit user confirmation.
 
 For every significant module, ensure the user can explain why it exists, the problem it solves, its inputs and outputs, its assumptions, and its failure modes. If not, pause that module and study or test the concept before continuing. Develop systematic thinking with one or two questions grounded in the current milestone, covering boundaries, dependencies, state, trade-offs, observability, or acceptance criteria. Connect answers to the complete ingestion-to-answer pipeline; questions must advance work, not test trivia.
