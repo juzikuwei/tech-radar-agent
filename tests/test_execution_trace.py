@@ -32,3 +32,13 @@ def test_events_returns_an_immutable_snapshot() -> None:
 
     assert first_snapshot == ()
     assert len(recorder.events) == 1
+
+
+def test_recorder_notifies_after_storing_each_event() -> None:
+    observed = []
+    recorder = TraceRecorder(on_event=observed.append)
+
+    recorder.record(stage="dense_retrieval", label="Dense")
+    recorder.record(stage="answer_generation", label="Answer")
+
+    assert observed == list(recorder.events)

@@ -16,7 +16,12 @@ from rag.conversation import (
     decide_conversation_action,
 )
 from rag.embedder import E5Embedder
-from rag.execution_trace import TraceEvent, TraceRecorder, start_timer
+from rag.execution_trace import (
+    TraceEvent,
+    TraceEventCallback,
+    TraceRecorder,
+    start_timer,
+)
 from rag.hybrid_search import hybrid_search
 from rag.keyword_search import DEFAULT_DATABASE_PATH
 from rag.llm_client import LLMRequestError, StatusCallback, generate_text
@@ -85,13 +90,14 @@ def run_rag(
     on_retry: StatusCallback | None = None,
     conversation_history: tuple[ConversationTurn, ...] = (),
     active_evidence: tuple[SearchResult, ...] = (),
+    on_trace: TraceEventCallback | None = None,
 ) -> RagResult:
     """Reuse conversational evidence or perform at most two new retrievals."""
     clean_question = question.strip()
     if not clean_question:
         raise ValueError("question must not be empty")
 
-    trace = TraceRecorder()
+    trace = TraceRecorder(on_event=on_trace)
     history = bounded_history(conversation_history)
     previous_evidence = list(active_evidence[:MAX_ACTIVE_EVIDENCE])
     retrieval_attempts = 0
