@@ -50,14 +50,32 @@ def test_search_returns_bounded_truncated_results() -> None:
 
 def test_search_maps_http_and_transport_failures() -> None:
     unauthorized = make_client(lambda request: httpx.Response(401, json={}))
-    with pytest.raises(WebSearchError, match="401"):
+    with pytest.raises(WebSearchError, match="401") as unauthorized_error:
         unauthorized.search("agent skills")
+    assert unauthorized_error.value.error_type == "authentication"
+    assert unauthorized_error.value.status_code == 401
+    assert unauthorized_error.value.retryable is False
+
+    unavailable = make_client(lambda request: httpx.Response(503, json={}))
+    with pytest.raises(WebSearchError, match="503") as unavailable_error:
+        unavailable.search("agent skills")
+    assert unavailable_error.value.error_type == "server"
+    assert unavailable_error.value.status_code == 503
+    assert unavailable_error.value.retryable is True
+
+    rate_limited = make_client(lambda request: httpx.Response(429, json={}))
+    with pytest.raises(WebSearchError, match="429") as rate_limit_error:
+        rate_limited.search("agent skills")
+    assert rate_limit_error.value.error_type == "rate_limit"
+    assert rate_limit_error.value.retryable is True
 
     def raise_timeout(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectTimeout("connection timed out")
 
-    with pytest.raises(WebSearchError, match="request failed"):
+    with pytest.raises(WebSearchError, match="request failed") as timeout_error:
         make_client(raise_timeout).search("agent skills")
+    assert timeout_error.value.error_type == "timeout"
+    assert timeout_error.value.retryable is True
 
 
 def test_search_rejects_invalid_payload_and_blank_query() -> None:

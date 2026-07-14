@@ -6,12 +6,19 @@ from time import perf_counter
 from typing import Literal
 
 
-TraceStatus = Literal["completed", "failed", "skipped"]
+TraceStatus = Literal[
+    "started",
+    "retrying",
+    "streaming",
+    "completed",
+    "failed",
+    "skipped",
+]
 
 
 @dataclass(frozen=True)
 class TraceEvent:
-    """One completed, failed, or skipped stage in request order."""
+    """One observable lifecycle event in request order."""
 
     stage: str
     label: str

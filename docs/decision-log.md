@@ -981,7 +981,7 @@ separate approval boundary.
 
 ## ADR-021: Stream completed Trace events before the final chat result
 
-- **Status:** Accepted
+- **Status:** Superseded by ADR-028
 - **Date:** 2026-07-12
 
 **Decision**
@@ -1425,3 +1425,189 @@ ownership columns before authentication or remote multi-user deployment.
 Stage 13 may read these completed turns to extract cross-conversation memory,
 but must use a separate schema and recall policy rather than widening the chat
 window.
+
+---
+
+## ADR-027: Make web-search failure recovery deterministic
+
+- **Status:** Superseded by ADR-028
+- **Date:** 2026-07-14
+
+**Decision**
+
+Classify Tavily failures at the web-search boundary with an error type, optional
+HTTP status, and retryability flag. Authentication and configuration failures
+are non-retryable and disable `web_search` for the remainder of the current
+request. Timeouts, transport failures, HTTP 429, and HTTP 5xx failures may keep
+the tool available for one remaining ReAct retry, bounded by the existing
+two-web-search and four-action limits.
+
+Every failed web call becomes a structured observation containing the error,
+error type, retryability, and whether the tool remains available. After any
+web failure, require at least one subsequent `search_papers` action before the
+agent may respond, finish, or refuse. If the web tool is disabled, remove it
+from `allowed_actions`. A research subquestion cannot remain `covered` when no
+paper evidence exists; normalize that bookkeeping back to `pending`. Keep the
+HTTP and frontend response contracts unchanged.
+
+**Context**
+
+A live run with an intentionally invalid Tavily key returned HTTP 401. The
+exception was safely converted into an observation, but the agent then repeated
+the identical web call because tool availability was still derived only from
+whether a client object existed. After the second failure exhausted the web
+budget, the model reclassified the technical question as conversation, marked
+the unanswered subquestion covered, and asked the user for context without
+trying the local paper tool. The request stayed healthy, but recovery did not
+complete the research task.
+
+**Alternatives considered**
+
+- Rely only on stronger prompt wording: small, but prior live runs already show
+  that negative instructions do not reliably control action selection or plan
+  bookkeeping.
+- Fall back to the fixed pipeline on every web failure: reliable, but discards
+  the remaining ReAct tools and hides a recoverable tool-level failure as an
+  agent-level failure.
+- Retry every web error twice: simple, but authentication, permission, invalid
+  request, and malformed-response failures cannot recover by repetition.
+- Answer from model memory after Tavily failure: responsive, but violates the
+  project contract that technical claims must be grounded in local papers.
+
+**Reason**
+
+Failure classification belongs at the network boundary, while allowed actions
+belong at the orchestration boundary. Making both explicit preserves the small
+hand-written ReAct loop, prevents known-dead tools from consuming action budget,
+and guarantees a best-effort grounded path before clarification or refusal.
+
+**Consequences**
+
+- An invalid or unauthorized Tavily key produces one failed web Trace event,
+  followed by a local paper search rather than another doomed web call.
+- Transient Tavily failures may still use the second web-search allowance, but
+  terminal actions remain unavailable until a later local search completes.
+- Web observations expose bounded operational metadata but never include API
+  keys, response bodies, or citable web evidence.
+- A request with too little remaining action budget to perform the required
+  local search may still fail to the existing reliable-pipeline boundary.
+
+**Review or migration trigger**
+
+Revisit the retry classification when a replacement web provider exposes
+provider-specific quota or maintenance signals. Move retries into a shared
+tool-execution policy only after another external tool needs the same behavior.
+Reconsider the mandatory local-search rule if a future trusted documentation
+tool can itself provide citable evidence.
+
+---
+
+## ADR-028: Replace the research classifier with a tool-calling harness
+
+- **Status:** Accepted
+- **Date:** 2026-07-14
+
+**Decision**
+
+Replace the ReAct `question_type` and structured `respond/search/finish`
+decision contract with one OpenAI-compatible tool-calling harness. For every
+model turn, expose the currently available function tools and let the model
+either return function calls or a user-visible assistant message. The two
+tools are `search_papers(query, top_k)`, which encapsulates the complete local
+hybrid retrieval and reranking stack, and optional
+`web_search(query, max_results)`, which remains non-citable query-shaping data.
+Execute at most one function call from each assistant turn even when a provider
+ignores `parallel_tool_calls=false`; return rejected extra calls as tool error
+messages without executing them or consuming the tool budget.
+Validate every primary function call against the exact tool menu sent in that
+turn. A request for a removed tool becomes a `tool_unavailable` observation,
+is never executed, and still consumes one of the five call allowances so an
+uncooperative model cannot loop forever.
+
+Allow at most five tool executions per request. After the fifth execution,
+perform one additional model call with no tools so the request can end with an
+answer, clarification, or grounded refusal. Tool failures always become tool
+messages containing bounded error metadata. Remove non-retryable tools from
+the next model turn; do not deterministically force a replacement tool. Keep
+the reliable fixed pipeline as the boundary fallback for model or harness
+failures.
+
+Upgrade the POST streaming endpoint from NDJSON completed-stage delivery to
+Server-Sent Events. Stream run lifecycle, model start/retry/completion, tool
+start/completion/failure, temporary status text, assistant text deltas, the
+complete assistant message, provider-reported token usage, and the final
+persisted result. Record per-call usage on model events and aggregate usage on
+the final response. Public ReAct Trace stops at the tool boundary; dense
+retrieval, BM25, rank fusion, and reranking remain internal diagnostics.
+
+This decision supersedes ADR-021 and the ReAct control-flow portions of
+ADR-025 and ADR-027. The Tavily trust boundary and failure classification from
+those decisions remain in force.
+
+**Context**
+
+Live traces showed that pre-classifying a message as conversation, ambiguous,
+or research created a second state machine beside the ReAct loop. A failed web
+search could cause the model to reclassify a technical question as
+conversation, while a deterministic recovery rule could over-correct and
+force retrieval after a mistaken tool choice. The user also saw internal BM25
+and dense-retrieval stages even though the Agent conceptually called one paper
+search tool.
+
+Completed-stage NDJSON made retrieval observable but still held the entire
+answer until generation ended and did not expose token usage. The product now
+needs the model/tool message boundary itself to be observable, including
+partial assistant text and operational failures.
+
+**Alternatives considered**
+
+- Keep the classifier and improve its prompt: preserves existing tests, but
+  retains duplicate control flow and cannot eliminate classifier/tool-choice
+  disagreement.
+- Treat `should_search` as a third tool: makes routing explicit, but adds a
+  tool that changes no external state and merely recreates the classifier
+  inside the harness.
+- Force local search after every web failure: grounded, but assumes the web
+  call was appropriate and prevents the model from asking for clarification.
+- Expose every retrieval substage as a public tool: maximizes detail, but the
+  model cannot usefully control those implementation steps and the UI leaks
+  storage-specific complexity.
+- Keep NDJSON and add more event types: technically workable, but SSE provides
+  standard event framing and clearer lifecycle semantics for a long-lived
+  server-to-browser stream.
+
+**Reason**
+
+Tool calling gives one control surface: the assistant message itself. A normal
+chat ends on the first model response, while a research question naturally
+continues through tool messages without a separate router. Encapsulating
+retrieval gives the tool one stable responsibility and permits the underlying
+search implementation to evolve without changing the Agent or UI contract.
+Usage and text deltas belong at the model boundary, so the same harness is the
+smallest place to make latency, retries, token cost, and intermediate tool
+state visible.
+
+**Consequences**
+
+- The deleted `research_plan.py` JSON contract and its question-type tests are
+  replaced by streamed function-call assembly and harness tests.
+- Simple conversation messages can finish in one model call without any tool.
+- Research quality now depends more directly on model tool choice; grounding
+  instructions and citation-ID validation remain necessary acceptance checks.
+- A request can make up to six model calls: one after each of five tools plus a
+  final no-tool call when the budget is exhausted.
+- ReAct users see concise model/tool events instead of storage-specific search
+  stages. Pipeline mode may still expose its fixed internal stages.
+- Token usage is request-scoped and is not persisted with old conversation
+  turns, matching the existing policy that historical Trace is not replayed.
+- POST streaming clients must parse SSE frames and handle incremental text;
+  the synchronous chat response remains available.
+
+**Review or migration trigger**
+
+Add deterministic policy checks only after repeated live traces show a
+specific unsafe tool-choice pattern. Introduce parallel tool calls when the
+tool set contains independent operations that benefit from concurrency.
+Persist usage and Trace when cross-request cost analysis becomes a product
+requirement. Revisit the five-call budget using observed latency and token
+distributions rather than increasing it preemptively.

@@ -26,7 +26,7 @@ from rag.execution_trace import (
 )
 from rag.hybrid_search import hybrid_search
 from rag.keyword_search import DEFAULT_DATABASE_PATH
-from rag.llm_client import LLMRequestError, StatusCallback, generate_text
+from rag.llm_client import LLMRequestError, ModelUsage, StatusCallback, generate_text
 from rag.prompt_builder import build_rag_messages
 from rag.reranker import Reranker
 from rag.retrieval_judge import (
@@ -53,6 +53,7 @@ class RagResult:
     retrieval_decision_error: str | None = None
     trace: tuple[TraceEvent, ...] = ()
     response_kind: Literal["research", "conversation"] = "research"
+    usage: ModelUsage | None = None
 
 
 def answer_from_results(

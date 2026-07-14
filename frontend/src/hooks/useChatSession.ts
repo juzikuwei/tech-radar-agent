@@ -13,6 +13,7 @@ import type {
   CompletedTurn,
   Conversation,
   ConversationSummary,
+  ModelUsage,
   TraceEvent,
 } from "../types";
 
@@ -25,6 +26,9 @@ export function useChatSession() {
   const [draft, setDraft] = useState("");
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
   const [liveTrace, setLiveTrace] = useState<TraceEvent[]>([]);
+  const [liveAnswer, setLiveAnswer] = useState("");
+  const [liveStatus, setLiveStatus] = useState("请求已接收，正在启动…");
+  const [liveUsage, setLiveUsage] = useState<ModelUsage | null>(null);
   const [requestError, setRequestError] = useState<string | null>(null);
   const [failedResult, setFailedResult] = useState<ChatResponse | null>(null);
   const [loadingConversation, setLoadingConversation] = useState(true);
@@ -48,6 +52,9 @@ export function useChatSession() {
     setDraft("");
     setPendingQuestion(null);
     setLiveTrace([]);
+    setLiveAnswer("");
+    setLiveStatus("请求已接收，正在启动…");
+    setLiveUsage(null);
     setRequestError(null);
     setFailedResult(null);
   }, []);
@@ -63,6 +70,9 @@ export function useChatSession() {
     setFailedResult(null);
     setPendingQuestion(null);
     setLiveTrace([]);
+    setLiveAnswer("");
+    setLiveStatus("请求已接收，正在启动…");
+    setLiveUsage(null);
     try {
       const conversation = await getConversation(conversationId);
       if (loadSequence.current === sequence) {
@@ -122,6 +132,9 @@ export function useChatSession() {
       setDraft("");
       setPendingQuestion(null);
       setLiveTrace([]);
+      setLiveAnswer("");
+      setLiveStatus("请求已接收，正在启动…");
+      setLiveUsage(null);
       setRequestError(null);
       setFailedResult(null);
       setLoadingConversation(false);
@@ -172,6 +185,9 @@ export function useChatSession() {
     setDraft("");
     setPendingQuestion(question);
     setLiveTrace([]);
+    setLiveAnswer("");
+    setLiveStatus("请求已接收，正在启动…");
+    setLiveUsage(null);
     setRequestError(null);
     setFailedResult(null);
     const controller = new AbortController();
@@ -180,10 +196,32 @@ export function useChatSession() {
       const result = await sendChatStream(
         conversationId,
         { question, top_k: 5, mode },
-        (event) => {
-          if (activeConversationIdRef.current === conversationId) {
-            setLiveTrace((current) => [...current, event]);
-          }
+        {
+          onTrace: (event) => {
+            if (activeConversationIdRef.current === conversationId) {
+              if (event.stage === "tool" && event.status === "started") {
+                setLiveAnswer("");
+                setLiveUsage(null);
+              }
+              setLiveTrace((current) => [...current, event]);
+            }
+          },
+          onStatus: (message) => {
+            if (activeConversationIdRef.current === conversationId) {
+              setLiveStatus(message);
+            }
+          },
+          onAssistantDelta: (delta) => {
+            if (activeConversationIdRef.current === conversationId) {
+              setLiveAnswer((current) => current + delta);
+            }
+          },
+          onAssistantCompleted: (content, usage) => {
+            if (activeConversationIdRef.current === conversationId) {
+              setLiveAnswer(content);
+              setLiveUsage(usage);
+            }
+          },
         },
         controller.signal,
       );
@@ -226,6 +264,9 @@ export function useChatSession() {
         activeRequest.current = null;
         setPendingQuestion(null);
         setLiveTrace([]);
+        setLiveAnswer("");
+        setLiveStatus("请求已接收，正在启动…");
+        setLiveUsage(null);
       }
     }
   }
@@ -245,6 +286,9 @@ export function useChatSession() {
     setDraft,
     pendingQuestion,
     liveTrace,
+    liveAnswer,
+    liveStatus,
+    liveUsage,
     requestError,
     failedResult,
     loadingConversation,

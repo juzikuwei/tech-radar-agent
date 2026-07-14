@@ -94,7 +94,7 @@ export function Sidebar({
             onClick={() => onModeChange("react")}
           >
             <strong>研究 Agent</strong>
-            <span>先规划，再按证据缺口检索</span>
+            <span>自主选择工具，最多调用 5 次</span>
           </button>
           <button
             type="button"

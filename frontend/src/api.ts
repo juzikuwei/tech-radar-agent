@@ -7,6 +7,7 @@ import type {
   KnowledgeBaseStats,
   TraceEvent,
 } from "./types";
+import type { ModelUsage } from "./types";
 
 const DEFAULT_API_BASE_URL = "http://127.0.0.1:8000";
 
@@ -70,7 +71,12 @@ export async function sendChat(
 export async function sendChatStream(
   conversationId: string,
   payload: ChatRequest,
-  onTrace: (event: TraceEvent) => void,
+  handlers: {
+    onTrace: (event: TraceEvent) => void;
+    onStatus: (message: string) => void;
+    onAssistantDelta: (delta: string) => void;
+    onAssistantCompleted: (content: string, usage: ModelUsage | null) => void;
+  },
   signal?: AbortSignal,
 ): Promise<ChatResponse> {
   let response: Response;
@@ -108,10 +114,11 @@ export async function sendChatStream(
   while (true) {
     const chunk = await reader.read();
     buffer += decoder.decode(chunk.value, { stream: !chunk.done });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
-    for (const line of lines) {
-      result = consumeStreamLine(line, onTrace, result);
+    buffer = buffer.replace(/\r\n/g, "\n");
+    const blocks = buffer.split("\n\n");
+    buffer = blocks.pop() ?? "";
+    for (const block of blocks) {
+      result = consumeSseBlock(block, handlers, result);
     }
     if (chunk.done) {
       break;
@@ -119,7 +126,7 @@ export async function sendChatStream(
   }
 
   if (buffer.trim()) {
-    result = consumeStreamLine(buffer, onTrace, result);
+    result = consumeSseBlock(buffer, handlers, result);
   }
   if (!result) {
     throw new ApiError("响应流提前结束，没有收到最终回答。", response.status);
@@ -127,24 +134,52 @@ export async function sendChatStream(
   return result;
 }
 
-function consumeStreamLine(
-  line: string,
-  onTrace: (event: TraceEvent) => void,
+function consumeSseBlock(
+  block: string,
+  handlers: {
+    onTrace: (event: TraceEvent) => void;
+    onStatus: (message: string) => void;
+    onAssistantDelta: (delta: string) => void;
+    onAssistantCompleted: (content: string, usage: ModelUsage | null) => void;
+  },
   currentResult: ChatResponse | null,
 ): ChatResponse | null {
-  if (!line.trim()) {
+  if (!block.trim()) {
     return currentResult;
   }
 
+  const data = block
+    .split("\n")
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).trimStart())
+    .join("\n");
+  if (!data) return currentResult;
+
   let event: ChatStreamEvent;
   try {
-    event = JSON.parse(line) as ChatStreamEvent;
+    event = JSON.parse(data) as ChatStreamEvent;
   } catch {
     throw new ApiError("后端返回了无法解析的 Trace 数据。");
   }
 
   if (event.type === "trace") {
-    onTrace(event.event);
+    handlers.onTrace(event.event);
+    return currentResult;
+  }
+  if (event.type === "status") {
+    handlers.onStatus(event.message);
+    return currentResult;
+  }
+  if (event.type === "assistant_delta") {
+    handlers.onAssistantDelta(event.delta);
+    return currentResult;
+  }
+  if (event.type === "assistant_completed") {
+    handlers.onAssistantCompleted(event.message.content, event.message.usage);
+    return currentResult;
+  }
+  if (event.type === "run_failed") {
+    handlers.onStatus(event.message);
     return currentResult;
   }
   if (event.type === "result") {

@@ -42,6 +42,9 @@ function App() {
           turns={chat.turns}
           pendingQuestion={chat.pendingQuestion}
           liveTrace={chat.liveTrace}
+          liveAnswer={chat.liveAnswer}
+          liveStatus={chat.liveStatus}
+          liveUsage={chat.liveUsage}
           requestError={chat.requestError}
           failedResult={chat.failedResult}
           loadingConversation={chat.loadingConversation}

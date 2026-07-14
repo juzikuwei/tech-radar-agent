@@ -39,6 +39,9 @@ export function ConversationTurn({
                       turn.result.conversation_decision.next_action}
                   </span>
                 ) : null}
+                {turn.result.usage ? (
+                  <span>{turn.result.usage.total_tokens} tokens</span>
+                ) : null}
               </>
             ) : (
               <span>

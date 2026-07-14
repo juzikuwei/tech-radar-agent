@@ -145,7 +145,7 @@ def chat_stream(
             payload,
             runtime,
         ),
-        media_type="application/x-ndjson",
+        media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache, no-transform",
             "X-Accel-Buffering": "no",

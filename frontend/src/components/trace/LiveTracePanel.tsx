@@ -3,19 +3,29 @@ import type { TraceEvent } from "../../types";
 import { TraceEventDetails } from "./TraceEventDetails";
 
 
-export function LiveTracePanel({ events }: { events: TraceEvent[] }) {
+export function LiveTracePanel({
+  events,
+  status,
+}: {
+  events: TraceEvent[];
+  status: string;
+}) {
   return (
     <div className="live-trace" aria-label="Agent 正在执行">
       <div className="live-trace-header">
         <span className="live-trace-spinner" aria-hidden="true" />
-        <strong>正在分析和检索</strong>
+        <strong>{status}</strong>
       </div>
       <div className="live-trace-list">
         {events.map((event, index) => (
           <div className="live-trace-event" key={`${event.stage}-${index}`}>
             <div className={`live-trace-item ${event.status}`}>
               <span className="live-trace-check" aria-hidden="true">
-                {event.status === "failed" ? "!" : "✓"}
+                {event.status === "failed"
+                  ? "!"
+                  : event.status === "started" || event.status === "retrying"
+                    ? "·"
+                    : "✓"}
               </span>
               <span>{event.label}</span>
               <time>{formatDuration(event.duration_ms)}</time>
@@ -27,7 +37,7 @@ export function LiveTracePanel({ events }: { events: TraceEvent[] }) {
         ))}
         <div className="live-trace-item active">
           <span className="active-step-dot" aria-hidden="true" />
-          <span>{events.length ? "正在执行下一步…" : "请求已接收，正在启动…"}</span>
+          <span>{status}</span>
         </div>
       </div>
     </div>

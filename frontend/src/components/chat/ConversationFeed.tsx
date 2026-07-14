@@ -1,6 +1,12 @@
 import type { RefObject } from "react";
+import ReactMarkdown from "react-markdown";
 
-import type { ChatResponse, CompletedTurn, TraceEvent } from "../../types";
+import type {
+  ChatResponse,
+  CompletedTurn,
+  ModelUsage,
+  TraceEvent,
+} from "../../types";
 import { ResultDetails } from "../results/ResultDetails";
 import { LiveTracePanel } from "../trace/LiveTracePanel";
 import { ConversationTurn } from "./ConversationTurn";
@@ -12,6 +18,9 @@ interface ConversationFeedProps {
   turns: CompletedTurn[];
   pendingQuestion: string | null;
   liveTrace: TraceEvent[];
+  liveAnswer: string;
+  liveStatus: string;
+  liveUsage: ModelUsage | null;
   requestError: string | null;
   failedResult: ChatResponse | null;
   loadingConversation: boolean;
@@ -24,6 +33,9 @@ export function ConversationFeed({
   turns,
   pendingQuestion,
   liveTrace,
+  liveAnswer,
+  liveStatus,
+  liveUsage,
   requestError,
   failedResult,
   loadingConversation,
@@ -45,7 +57,13 @@ export function ConversationFeed({
       ))}
 
       {pendingQuestion ? (
-        <PendingAnswer question={pendingQuestion} trace={liveTrace} />
+        <PendingAnswer
+          question={pendingQuestion}
+          trace={liveTrace}
+          answer={liveAnswer}
+          status={liveStatus}
+          usage={liveUsage}
+        />
       ) : null}
 
       {requestError ? (
@@ -64,16 +82,34 @@ export function ConversationFeed({
 function PendingAnswer({
   question,
   trace,
+  answer,
+  status,
+  usage,
 }: {
   question: string;
   trace: TraceEvent[];
+  answer: string;
+  status: string;
+  usage: ModelUsage | null;
 }) {
   return (
     <>
       <UserBubble question={question} />
       <div className="assistant-row loading-row">
         <div className="assistant-avatar" aria-label="研究助手">✦</div>
-        <LiveTracePanel events={trace} />
+        <div className="assistant-content">
+          <LiveTracePanel events={trace} status={status} />
+          {answer ? (
+            <div className="markdown-answer live-answer">
+              <ReactMarkdown>{answer}</ReactMarkdown>
+            </div>
+          ) : null}
+          {usage ? (
+            <div className="live-usage">
+              本条消息 {usage.total_tokens} tokens
+            </div>
+          ) : null}
+        </div>
       </div>
     </>
   );

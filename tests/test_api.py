@@ -22,6 +22,19 @@ from rag.research_agent import ResearchAgentError
 from rag.runtime import RagRuntime
 
 
+def parse_sse_events(body: str) -> list[dict[str, object]]:
+    events: list[dict[str, object]] = []
+    for block in body.replace("\r\n", "\n").split("\n\n"):
+        data = "\n".join(
+            line[5:].lstrip()
+            for line in block.splitlines()
+            if line.startswith("data:")
+        )
+        if data:
+            events.append(json.loads(data))
+    return events
+
+
 class FakeCollection:
     def count(self) -> int:
         return 1
@@ -235,16 +248,21 @@ def test_chat_stream_emits_trace_then_persists_complete_result(
         )
         stored = client.get(f"/conversations/{conversation_id}")
 
-    events = [json.loads(line) for line in response.text.splitlines()]
+    events = parse_sse_events(response.text)
     assert [event["type"] for event in events] == [
         "run_started",
         "trace",
+        "assistant_delta",
+        "assistant_completed",
+        "run_completed",
         "result",
     ]
     assert events[1]["event"]["stage"] == "dense_retrieval"
-    assert events[2]["result"]["answer"] == "complete answer"
+    assert events[2]["delta"] == "complete answer"
+    assert events[-1]["result"]["answer"] == "complete answer"
     assert stored.json()["turn_count"] == 1
     assert response.headers["x-accel-buffering"] == "no"
+    assert response.headers["content-type"].startswith("text/event-stream")
 
 
 def test_react_mode_uses_research_agent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -279,7 +297,7 @@ def test_react_mode_uses_research_agent(tmp_path: Path, monkeypatch: pytest.Monk
     assert response.json()["fallback_used"] is False
 
 
-def test_react_initial_decision_failure_requests_clarification_without_search(
+def test_react_initial_model_failure_falls_back_to_reliable_pipeline(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -319,13 +337,12 @@ def test_react_initial_decision_failure_requests_clarification_without_search(
         )
 
     body = response.json()
-    assert "请明确告诉我" in body["answer"]
+    assert body["answer"] == "pipeline fallback"
     assert body["fallback_used"] is True
     assert [event["stage"] for event in body["trace"]] == [
         "agent_decision",
-        "react_clarification",
+        "react_fallback",
     ]
-    assert body["response_kind"] == "conversation"
 
 
 def test_react_tool_failure_still_falls_back_to_reliable_pipeline(

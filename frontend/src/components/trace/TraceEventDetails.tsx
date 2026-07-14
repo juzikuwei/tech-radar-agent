@@ -19,7 +19,13 @@ export function TraceEventDetails({
   const reason = typeof details.reason_summary === "string"
     ? details.reason_summary
     : null;
-  const compactKeys = ["query", "result_count", "next_action"];
+  const compactKeys = [
+    "tool",
+    "arguments",
+    "output",
+    "usage",
+    "finish_reason",
+  ];
   const hiddenKeys = new Set(["plan", "reason_summary"]);
   const entries = Object.entries(details).filter(([key]) => {
     if (hiddenKeys.has(key)) return false;

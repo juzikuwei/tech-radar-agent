@@ -43,6 +43,14 @@ class TraceEventResponse(BaseModel):
     details: dict[str, Any]
 
 
+class ModelUsageResponse(BaseModel):
+    """Provider-reported token usage for one complete agent run."""
+
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+
+
 class ConversationDecisionResponse(BaseModel):
     """Validated evidence action selected for a follow-up question."""
 
@@ -69,6 +77,7 @@ class ChatResponse(BaseModel):
     response_kind: Literal["research", "conversation"] = "research"
     mode: Literal["pipeline", "react"] = "pipeline"
     fallback_used: bool = False
+    usage: ModelUsageResponse | None = None
 
 
 class ConversationSummaryResponse(BaseModel):

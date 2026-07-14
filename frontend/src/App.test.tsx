@@ -61,6 +61,7 @@ const response: ChatResponse = {
   response_kind: "research",
   mode: "react",
   fallback_used: false,
+  usage: null,
   papers: [
     {
       arxiv_id: "2501.09136",
@@ -152,7 +153,12 @@ describe("App", () => {
         top_k: 5,
         mode: "react",
       },
-      expect.any(Function),
+      expect.objectContaining({
+        onTrace: expect.any(Function),
+        onStatus: expect.any(Function),
+        onAssistantDelta: expect.any(Function),
+        onAssistantCompleted: expect.any(Function),
+      }),
       expect.any(AbortSignal),
     );
   });
@@ -213,8 +219,15 @@ describe("App", () => {
       finishRequest = resolve;
     });
     vi.mocked(sendChatStream).mockImplementation(
-      async (_conversationId, _payload, onTrace) => {
-        onTrace(response.trace[0] as TraceEvent);
+      async (_conversationId, _payload, handlers) => {
+        handlers.onStatus("模型正在生成回答…");
+        handlers.onTrace(response.trace[0] as TraceEvent);
+        handlers.onAssistantDelta("实时生成的回答");
+        handlers.onAssistantCompleted("实时生成的回答", {
+          prompt_tokens: 20,
+          completion_tokens: 5,
+          total_tokens: 25,
+        });
         return pendingResult;
       },
     );
@@ -225,6 +238,9 @@ describe("App", () => {
     await user.click(screen.getByRole("button", { name: "发送" }));
 
     expect(await screen.findByText("DeepSeek 最终回答生成")).toBeInTheDocument();
+    expect(screen.getAllByText("模型正在生成回答…")).toHaveLength(2);
+    expect(screen.getByText("实时生成的回答")).toBeInTheDocument();
+    expect(screen.getByText("本条消息 25 tokens")).toBeInTheDocument();
     expect(screen.queryByText(/这是一个基于证据的回答/)).not.toBeInTheDocument();
 
     finishRequest?.(response);
@@ -244,7 +260,9 @@ describe("App", () => {
     expect(sendChatStream).toHaveBeenCalledWith(
       "conversation-1",
       expect.objectContaining({ mode: "pipeline" }),
-      expect.any(Function),
+      expect.objectContaining({
+        onTrace: expect.any(Function),
+      }),
       expect.any(AbortSignal),
     );
   });

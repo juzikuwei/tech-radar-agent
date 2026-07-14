@@ -21,9 +21,21 @@ export interface Paper {
 export interface TraceEvent {
   stage: string;
   label: string;
-  status: "completed" | "failed" | "skipped";
+  status:
+    | "started"
+    | "retrying"
+    | "streaming"
+    | "completed"
+    | "failed"
+    | "skipped";
   duration_ms: number;
   details: Record<string, unknown>;
+}
+
+export interface ModelUsage {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
 }
 
 export interface ConversationDecision {
@@ -48,11 +60,20 @@ export interface ChatResponse {
   response_kind: "research" | "conversation";
   mode: ChatMode;
   fallback_used: boolean;
+  usage: ModelUsage | null;
 }
 
 export type ChatStreamEvent =
   | { type: "run_started"; question: string; mode: ChatMode }
   | { type: "trace"; event: TraceEvent }
+  | { type: "status"; message: string }
+  | { type: "assistant_delta"; delta: string }
+  | {
+      type: "assistant_completed";
+      message: { content: string; usage: ModelUsage | null };
+    }
+  | { type: "run_completed"; usage: ModelUsage | null }
+  | { type: "run_failed"; message: string }
   | { type: "result"; result: ChatResponse }
   | { type: "error"; message: string };
 

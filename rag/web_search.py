@@ -25,6 +25,19 @@ REQUEST_TIMEOUT_SECONDS = 15.0
 class WebSearchError(RuntimeError):
     """A web-search call failed and should become a tool observation."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        error_type: str = "unknown",
+        status_code: int | None = None,
+        retryable: bool = False,
+    ) -> None:
+        super().__init__(message)
+        self.error_type = error_type
+        self.status_code = status_code
+        self.retryable = retryable
+
 
 @dataclass(frozen=True)
 class WebSearchResult:
@@ -82,20 +95,57 @@ class TavilySearchClient:
                         "search_depth": "basic",
                     },
                 )
+        except httpx.TimeoutException as error:
+            raise WebSearchError(
+                f"web search request failed: {error}",
+                error_type="timeout",
+                retryable=True,
+            ) from error
+        except httpx.TransportError as error:
+            raise WebSearchError(
+                f"web search request failed: {error}",
+                error_type="transport",
+                retryable=True,
+            ) from error
         except httpx.HTTPError as error:
-            raise WebSearchError(f"web search request failed: {error}") from error
+            raise WebSearchError(
+                f"web search request failed: {error}",
+                error_type="request",
+            ) from error
 
         if response.status_code != 200:
+            status_code = response.status_code
+            if status_code in {401, 403}:
+                error_type = "authentication"
+                retryable = False
+            elif status_code == 429:
+                error_type = "rate_limit"
+                retryable = True
+            elif status_code >= 500:
+                error_type = "server"
+                retryable = True
+            else:
+                error_type = "http"
+                retryable = False
             raise WebSearchError(
-                f"web search returned HTTP {response.status_code}"
+                f"web search returned HTTP {status_code}",
+                error_type=error_type,
+                status_code=status_code,
+                retryable=retryable,
             )
         try:
             payload = response.json()
         except ValueError as error:
-            raise WebSearchError("web search returned invalid JSON") from error
+            raise WebSearchError(
+                "web search returned invalid JSON",
+                error_type="invalid_response",
+            ) from error
         raw_results = payload.get("results") if isinstance(payload, dict) else None
         if not isinstance(raw_results, list):
-            raise WebSearchError("web search response is missing results")
+            raise WebSearchError(
+                "web search response is missing results",
+                error_type="invalid_response",
+            )
 
         results: list[WebSearchResult] = []
         for item in raw_results[:bounded_count]:
