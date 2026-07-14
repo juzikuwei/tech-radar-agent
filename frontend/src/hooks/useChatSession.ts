@@ -1,33 +1,171 @@
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
-import { sendChatStream } from "../api";
-import { MAX_HISTORY_TURNS } from "../constants";
-import type { ChatMode, ChatResponse, CompletedTurn, TraceEvent } from "../types";
+import {
+  createConversation,
+  deleteConversation,
+  getConversation,
+  listConversations,
+  sendChatStream,
+} from "../api";
+import type {
+  ChatMode,
+  ChatResponse,
+  CompletedTurn,
+  Conversation,
+  ConversationSummary,
+  TraceEvent,
+} from "../types";
 
 
 export function useChatSession() {
   const [mode, setMode] = useState<ChatMode>("react");
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [turns, setTurns] = useState<CompletedTurn[]>([]);
-  const [activeEvidenceIds, setActiveEvidenceIds] = useState<string[]>([]);
   const [draft, setDraft] = useState("");
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
   const [liveTrace, setLiveTrace] = useState<TraceEvent[]>([]);
   const [requestError, setRequestError] = useState<string | null>(null);
   const [failedResult, setFailedResult] = useState<ChatResponse | null>(null);
+  const [loadingConversation, setLoadingConversation] = useState(true);
+  const [managingConversations, setManagingConversations] = useState(false);
   const activeRequest = useRef<AbortController | null>(null);
+  const activeConversationIdRef = useRef<string | null>(null);
+  const loadSequence = useRef(0);
+  const initialization = useRef<Promise<void> | null>(null);
 
-  const historyForApi = useMemo(
-    () =>
-      turns.slice(-MAX_HISTORY_TURNS).map((turn) => ({
-        user_message: turn.question,
-        assistant_message: turn.answer,
-      })),
-    [turns],
-  );
+  const showConversation = useCallback((conversation: Conversation) => {
+    activeConversationIdRef.current = conversation.conversation_id;
+    setActiveConversationId(conversation.conversation_id);
+    setTurns(conversation.turns.map((turn) => ({
+      id: String(turn.turn_id),
+      question: turn.user_message,
+      answer: turn.assistant_message,
+      papers: turn.papers,
+      responseKind: turn.response_kind,
+      result: null,
+    })));
+    setDraft("");
+    setPendingQuestion(null);
+    setLiveTrace([]);
+    setRequestError(null);
+    setFailedResult(null);
+  }, []);
+
+  const loadConversation = useCallback(async (conversationId: string) => {
+    const sequence = ++loadSequence.current;
+    activeRequest.current?.abort();
+    activeRequest.current = null;
+    activeConversationIdRef.current = conversationId;
+    setActiveConversationId(conversationId);
+    setLoadingConversation(true);
+    setRequestError(null);
+    setFailedResult(null);
+    setPendingQuestion(null);
+    setLiveTrace([]);
+    try {
+      const conversation = await getConversation(conversationId);
+      if (loadSequence.current === sequence) {
+        showConversation(conversation);
+      }
+    } catch (error) {
+      if (loadSequence.current === sequence) {
+        setTurns([]);
+        setRequestError(
+          error instanceof Error ? error.message : "加载会话失败，请稍后重试。",
+        );
+      }
+    } finally {
+      if (loadSequence.current === sequence) {
+        setLoadingConversation(false);
+      }
+    }
+  }, [showConversation]);
+
+  useEffect(() => {
+    if (initialization.current) {
+      return;
+    }
+    initialization.current = (async () => {
+      try {
+        let available = await listConversations();
+        if (!available.length) {
+          available = [await createConversation()];
+        }
+        setConversations(available);
+        await loadConversation(available[0].conversation_id);
+      } catch (error) {
+        setLoadingConversation(false);
+        setRequestError(
+          error instanceof Error ? error.message : "初始化会话失败，请稍后重试。",
+        );
+      }
+    })();
+  }, [loadConversation]);
+
+  async function startNewConversation() {
+    setManagingConversations(true);
+    activeRequest.current?.abort();
+    activeRequest.current = null;
+    try {
+      const created = await createConversation();
+      loadSequence.current += 1;
+      activeConversationIdRef.current = created.conversation_id;
+      setActiveConversationId(created.conversation_id);
+      setConversations((current) => [
+        created,
+        ...current.filter(
+          (conversation) => conversation.conversation_id !== created.conversation_id,
+        ),
+      ]);
+      setTurns([]);
+      setDraft("");
+      setPendingQuestion(null);
+      setLiveTrace([]);
+      setRequestError(null);
+      setFailedResult(null);
+      setLoadingConversation(false);
+    } catch (error) {
+      setRequestError(
+        error instanceof Error ? error.message : "新建会话失败，请稍后重试。",
+      );
+    } finally {
+      setManagingConversations(false);
+    }
+  }
+
+  async function removeConversation(conversationId: string) {
+    setManagingConversations(true);
+    if (activeConversationIdRef.current === conversationId) {
+      activeRequest.current?.abort();
+      activeRequest.current = null;
+    }
+    try {
+      await deleteConversation(conversationId);
+      const remaining = conversations.filter(
+        (conversation) => conversation.conversation_id !== conversationId,
+      );
+      setConversations(remaining);
+      if (activeConversationIdRef.current === conversationId) {
+        if (remaining.length) {
+          await loadConversation(remaining[0].conversation_id);
+        } else {
+          await startNewConversation();
+        }
+      }
+    } catch (error) {
+      setRequestError(
+        error instanceof Error ? error.message : "删除会话失败，请稍后重试。",
+      );
+    } finally {
+      setManagingConversations(false);
+    }
+  }
 
   async function submitQuestion(questionInput: string) {
     const question = questionInput.trim();
-    if (!question || pendingQuestion) {
+    const conversationId = activeConversationIdRef.current;
+    if (!question || pendingQuestion || !conversationId || loadingConversation) {
       return;
     }
 
@@ -40,16 +178,18 @@ export function useChatSession() {
     activeRequest.current = controller;
     try {
       const result = await sendChatStream(
-        {
-          question,
-          conversation_history: historyForApi,
-          active_evidence_ids: activeEvidenceIds,
-          top_k: 5,
-          mode,
+        conversationId,
+        { question, top_k: 5, mode },
+        (event) => {
+          if (activeConversationIdRef.current === conversationId) {
+            setLiveTrace((current) => [...current, event]);
+          }
         },
-        (event) => setLiveTrace((current) => [...current, event]),
         controller.signal,
       );
+      if (activeConversationIdRef.current !== conversationId) {
+        return;
+      }
       if (!result.answer) {
         setFailedResult(result);
         setRequestError(
@@ -58,17 +198,22 @@ export function useChatSession() {
         return;
       }
 
-      const answer = result.answer;
       setTurns((current) => [
         ...current,
         {
           id: `${Date.now()}-${current.length}`,
           question,
-          answer,
+          answer: result.answer as string,
+          papers: result.papers,
+          responseKind: result.response_kind,
           result,
         },
       ]);
-      setActiveEvidenceIds(result.papers.map((paper) => paper.arxiv_id));
+      try {
+        setConversations(await listConversations());
+      } catch {
+        // The answer is already persisted; a refresh can recover list metadata.
+      }
     } catch (error) {
       if (controller.signal.aborted) {
         return;
@@ -85,19 +230,14 @@ export function useChatSession() {
     }
   }
 
-  function resetConversation() {
-    activeRequest.current?.abort();
-    activeRequest.current = null;
-    setTurns([]);
-    setActiveEvidenceIds([]);
-    setPendingQuestion(null);
-    setLiveTrace([]);
-    setRequestError(null);
-    setFailedResult(null);
-    setDraft("");
-  }
+  const activeConversation = conversations.find(
+    (conversation) => conversation.conversation_id === activeConversationId,
+  ) ?? null;
 
   return {
+    conversations,
+    activeConversation,
+    activeConversationId,
     turns,
     mode,
     setMode,
@@ -107,8 +247,12 @@ export function useChatSession() {
     liveTrace,
     requestError,
     failedResult,
+    loadingConversation,
+    managingConversations,
     submitQuestion,
-    resetConversation,
-    canReset: Boolean(turns.length || requestError || pendingQuestion),
+    startNewConversation,
+    selectConversation: loadConversation,
+    removeConversation,
+    isReady: Boolean(activeConversationId) && !loadingConversation,
   };
 }

@@ -2,26 +2,19 @@
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 DEFAULT_TOP_K = 5
 MAX_TOP_K = 10
 
 
-class ConversationTurnInput(BaseModel):
-    """One completed conversation turn supplied by the client."""
-
-    user_message: str = Field(min_length=1)
-    assistant_message: str = Field(min_length=1)
-
-
 class ChatRequest(BaseModel):
-    """Bounded client state required for one RAG request."""
+    """Client-controlled options for one conversation-scoped RAG request."""
+
+    model_config = ConfigDict(extra="forbid")
 
     question: str = Field(min_length=1)
-    conversation_history: list[ConversationTurnInput] = Field(default_factory=list)
-    active_evidence_ids: list[str] = Field(default_factory=list)
     top_k: int = Field(default=DEFAULT_TOP_K, ge=1, le=MAX_TOP_K)
     mode: Literal["pipeline", "react"] = "pipeline"
 
@@ -73,8 +66,37 @@ class ChatResponse(BaseModel):
     retrieval_attempts: int
     standalone_question: str | None
     conversation_decision: ConversationDecisionResponse | None
+    response_kind: Literal["research", "conversation"] = "research"
     mode: Literal["pipeline", "react"] = "pipeline"
     fallback_used: bool = False
+
+
+class ConversationSummaryResponse(BaseModel):
+    """List-ready metadata for one persistent conversation."""
+
+    conversation_id: str
+    title: str
+    created_at: str
+    updated_at: str
+    turn_count: int
+
+
+class ConversationTurnResponse(BaseModel):
+    """One persisted turn with current paper metadata but no old Trace."""
+
+    turn_id: int
+    user_message: str
+    assistant_message: str
+    paper_ids: list[str]
+    papers: list[PaperResponse]
+    response_kind: Literal["research", "conversation"]
+    created_at: str
+
+
+class ConversationResponse(ConversationSummaryResponse):
+    """One persistent conversation and its complete history."""
+
+    turns: list[ConversationTurnResponse]
 
 
 class KnowledgeBaseStatsResponse(BaseModel):

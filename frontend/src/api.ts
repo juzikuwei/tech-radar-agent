@@ -2,6 +2,8 @@ import type {
   ChatRequest,
   ChatResponse,
   ChatStreamEvent,
+  Conversation,
+  ConversationSummary,
   KnowledgeBaseStats,
   TraceEvent,
 } from "./types";
@@ -26,27 +28,62 @@ export async function getKnowledgeBaseStats(): Promise<KnowledgeBaseStats> {
   return requestJson<KnowledgeBaseStats>("/knowledge-base/stats");
 }
 
-export async function sendChat(payload: ChatRequest): Promise<ChatResponse> {
-  return requestJson<ChatResponse>("/chat", {
+export async function listConversations(): Promise<ConversationSummary[]> {
+  return requestJson<ConversationSummary[]>("/conversations");
+}
+
+export async function createConversation(): Promise<ConversationSummary> {
+  return requestJson<ConversationSummary>("/conversations", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
   });
 }
 
+export async function getConversation(
+  conversationId: string,
+): Promise<Conversation> {
+  return requestJson<Conversation>(
+    `/conversations/${encodeURIComponent(conversationId)}`,
+  );
+}
+
+export async function deleteConversation(conversationId: string): Promise<void> {
+  await requestVoid(
+    `/conversations/${encodeURIComponent(conversationId)}`,
+    { method: "DELETE" },
+  );
+}
+
+export async function sendChat(
+  conversationId: string,
+  payload: ChatRequest,
+): Promise<ChatResponse> {
+  return requestJson<ChatResponse>(
+    `/conversations/${encodeURIComponent(conversationId)}/chat`,
+    {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    },
+  );
+}
+
 export async function sendChatStream(
+  conversationId: string,
   payload: ChatRequest,
   onTrace: (event: TraceEvent) => void,
   signal?: AbortSignal,
 ): Promise<ChatResponse> {
   let response: Response;
   try {
-    response = await fetch(`${API_BASE_URL}/chat/stream`, {
+    response = await fetch(
+      `${API_BASE_URL}/conversations/${encodeURIComponent(conversationId)}/chat/stream`,
+      {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
       signal,
-    });
+      },
+    );
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
       throw error;
@@ -133,6 +170,20 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
     throw new ApiError(await readErrorMessage(response), response.status);
   }
   return (await response.json()) as T;
+}
+
+async function requestVoid(path: string, init?: RequestInit): Promise<void> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, init);
+  } catch {
+    throw new ApiError(
+      `无法连接 FastAPI：请确认后端已启动（${API_BASE_URL}）`,
+    );
+  }
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
 }
 
 async function readErrorMessage(response: Response): Promise<string> {

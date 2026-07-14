@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from chromadb.api.models.Collection import Collection
 
@@ -12,8 +12,10 @@ from rag.conversation import (
     ConversationDecisionError,
     ConversationTurn,
     MAX_ACTIVE_EVIDENCE,
+    SAFE_CLARIFICATION_RESPONSE,
     bounded_history,
     decide_conversation_action,
+    generate_conversational_response,
 )
 from rag.embedder import E5Embedder
 from rag.execution_trace import (
@@ -50,6 +52,7 @@ class RagResult:
     retrieval_decision: RetrievalDecision | None = None
     retrieval_decision_error: str | None = None
     trace: tuple[TraceEvent, ...] = ()
+    response_kind: Literal["research", "conversation"] = "research"
 
 
 def answer_from_results(
@@ -143,6 +146,16 @@ def run_rag(
                 previous_evidence,
                 conversation_decision.reusable_arxiv_ids,
             )
+            if conversation_decision.next_action == "respond":
+                return _generate_conversation_response(
+                    clean_question,
+                    history=history,
+                    settings=settings,
+                    client=client,
+                    on_retry=on_retry,
+                    trace=trace,
+                    conversation_decision=conversation_decision,
+                )
             if conversation_decision.next_action == "answer_from_existing":
                 results = _rerank_existing_evidence(
                     standalone_question,
@@ -193,17 +206,22 @@ def run_rag(
                 started_at=started_at,
                 details={"error": conversation_decision_error},
             )
-            results = _run_retrieval(
-                clean_question,
-                top_k=top_k,
-                collection=collection,
-                embedder=embedder,
-                reranker=reranker,
-                database_path=database_path,
-                trace=trace,
-                retrieval_round=1,
+            trace.record(
+                stage="conversation_clarification",
+                label="对话决策失败后请求澄清",
+                details={"reason": conversation_decision_error},
             )
-            retrieval_attempts = 1
+            return RagResult(
+                question=clean_question,
+                papers=(),
+                answer=SAFE_CLARIFICATION_RESPONSE,
+                generation_error=None,
+                retrieval_attempts=0,
+                standalone_question=clean_question,
+                conversation_decision_error=conversation_decision_error,
+                trace=trace.events,
+                response_kind="conversation",
+            )
     else:
         results = _run_retrieval(
             clean_question,
@@ -338,6 +356,65 @@ def run_rag(
         retrieval_decision=retrieval_decision,
         retrieval_decision_error=retrieval_decision_error,
         trace=trace.events,
+    )
+
+
+def _generate_conversation_response(
+    question: str,
+    *,
+    history: tuple[ConversationTurn, ...],
+    settings: ModelSettings,
+    client: Any | None,
+    on_retry: StatusCallback | None,
+    trace: TraceRecorder,
+    conversation_decision: ConversationDecision,
+) -> RagResult:
+    """Generate one no-tool response without introducing research claims."""
+    started_at = start_timer()
+    try:
+        answer = generate_conversational_response(
+            question,
+            history,
+            settings=settings,
+            client=client,
+            on_retry=on_retry,
+        )
+    except LLMRequestError as error:
+        trace.record(
+            stage="conversation_response",
+            label="DeepSeek 生成直接对话回应",
+            status="failed",
+            started_at=started_at,
+            details={"error": str(error)},
+        )
+        return RagResult(
+            question=question,
+            papers=(),
+            answer=None,
+            generation_error=str(error),
+            retrieval_attempts=0,
+            standalone_question=conversation_decision.standalone_question,
+            conversation_decision=conversation_decision,
+            trace=trace.events,
+            response_kind="conversation",
+        )
+
+    trace.record(
+        stage="conversation_response",
+        label="DeepSeek 生成直接对话回应",
+        started_at=started_at,
+        details={"answer_char_count": len(answer)},
+    )
+    return RagResult(
+        question=question,
+        papers=(),
+        answer=answer,
+        generation_error=None,
+        retrieval_attempts=0,
+        standalone_question=conversation_decision.standalone_question,
+        conversation_decision=conversation_decision,
+        trace=trace.events,
+        response_kind="conversation",
     )
 
 

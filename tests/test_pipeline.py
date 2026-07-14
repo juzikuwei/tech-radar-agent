@@ -4,7 +4,11 @@ import numpy as np
 
 from config.model_settings import ModelSettings
 from rag.application import answer_from_results, run_rag
-from rag.conversation import ConversationDecision, ConversationTurn
+from rag.conversation import (
+    ConversationDecision,
+    ConversationDecisionError,
+    ConversationTurn,
+)
 from rag.llm_client import LLMRequestError
 from rag.retrieval_judge import RetrievalDecision, RetrievalDecisionError
 from rag.search import SearchResult
@@ -252,6 +256,86 @@ class FollowupReranker:
 
 
 HISTORY = (ConversationTurn("first question", "first answer"),)
+
+
+def test_followup_feedback_responds_without_retrieval(monkeypatch: object) -> None:
+    old = make_search_result("OLD", "old direct evidence")
+    monkeypatch.setattr(
+        "rag.application.decide_conversation_action",
+        lambda *args, **kwargs: ConversationDecision(
+            coverage="not_applicable",
+            next_action="respond",
+            reason="the user is giving feedback",
+            standalone_question="回应用户反馈",
+            reusable_arxiv_ids=(),
+            missing_aspects=(),
+            retrieval_query=None,
+        ),
+    )
+    monkeypatch.setattr(
+        "rag.application.hybrid_search",
+        lambda *args, **kwargs: pytest.fail("feedback must not trigger retrieval"),
+    )
+    monkeypatch.setattr(
+        "rag.application.generate_conversational_response",
+        lambda *args, **kwargs: "你说得对。你希望我先检查哪一个结论？",
+    )
+
+    result = run_rag(
+        "感觉你在乱说",
+        top_k=5,
+        collection=object(),
+        embedder=object(),
+        reranker=FollowupReranker(),
+        settings=ModelSettings("key", "https://example.test", "model"),
+        conversation_history=HISTORY,
+        active_evidence=(old,),
+    )
+
+    assert result.answer == "你说得对。你希望我先检查哪一个结论？"
+    assert result.papers == ()
+    assert result.retrieval_attempts == 0
+    assert result.response_kind == "conversation"
+    assert [event.stage for event in result.trace] == [
+        "conversation_evidence_decision",
+        "conversation_response",
+    ]
+
+
+def test_invalid_followup_decision_requests_clarification_without_retrieval(
+    monkeypatch: object,
+) -> None:
+    monkeypatch.setattr(
+        "rag.application.decide_conversation_action",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            ConversationDecisionError("invalid action")
+        ),
+    )
+    monkeypatch.setattr(
+        "rag.application.hybrid_search",
+        lambda *args, **kwargs: pytest.fail(
+            "invalid conversation decision must not retrieve raw user text"
+        ),
+    )
+
+    result = run_rag(
+        "感觉你在乱说",
+        top_k=5,
+        collection=object(),
+        embedder=object(),
+        reranker=FollowupReranker(),
+        settings=ModelSettings("key", "https://example.test", "model"),
+        conversation_history=HISTORY,
+    )
+
+    assert result.answer is not None
+    assert "请明确告诉我" in result.answer
+    assert result.retrieval_attempts == 0
+    assert result.response_kind == "conversation"
+    assert [event.stage for event in result.trace] == [
+        "conversation_evidence_decision",
+        "conversation_clarification",
+    ]
 
 
 def test_followup_reuses_sufficient_evidence_without_retrieval(

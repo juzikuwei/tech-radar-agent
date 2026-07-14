@@ -22,30 +22,47 @@ export function ConversationTurn({
         <div className="assistant-content">
           <div className="answer-meta">
             <span>研究助手 · {String(index).padStart(2, "0")}</span>
-            <span>{turn.result.retrieval_attempts} 次新检索</span>
-            <span>
-              {turn.result.mode === "react" ? "研究 Agent" : "可靠管线"}
-              {turn.result.fallback_used ? "（已降级）" : ""}
-            </span>
-            {turn.result.conversation_decision ? (
+            {turn.result ? (
+              <>
+                <span>
+                  {turn.result.response_kind === "conversation"
+                    ? "直接对话回应"
+                    : `${turn.result.retrieval_attempts} 次新检索`}
+                </span>
+                <span>
+                  {turn.result.mode === "react" ? "研究 Agent" : "可靠管线"}
+                  {turn.result.fallback_used ? "（已降级）" : ""}
+                </span>
+                {turn.result.conversation_decision ? (
+                  <span>
+                    {ACTION_LABELS[turn.result.conversation_decision.next_action] ??
+                      turn.result.conversation_decision.next_action}
+                  </span>
+                ) : null}
+              </>
+            ) : (
               <span>
-                {ACTION_LABELS[turn.result.conversation_decision.next_action] ??
-                  turn.result.conversation_decision.next_action}
+                {turn.responseKind === "conversation" ? "对话回应" : "研究回答"}
+                · Trace 不回放
               </span>
-            ) : null}
+            )}
           </div>
-          <div className="completed-trace">
-            <TracePanel
-              events={turn.result.trace}
-              title={`已完成 ${turn.result.trace.length} 个执行步骤`}
-            />
-          </div>
+          {turn.result ? (
+            <div className="completed-trace">
+              <TracePanel
+                events={turn.result.trace}
+                title={`已完成 ${turn.result.trace.length} 个执行步骤`}
+              />
+            </div>
+          ) : null}
           <div className="markdown-answer">
             <ReactMarkdown>{turn.answer}</ReactMarkdown>
           </div>
-          <div className="result-details">
-            <PaperList papers={turn.result.papers} />
-          </div>
+          {turn.papers.length ? (
+            <div className="result-details">
+              <PaperList papers={turn.papers} />
+            </div>
+          ) : null}
         </div>
       </div>
     </article>

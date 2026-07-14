@@ -1,4 +1,5 @@
 export const MAX_HISTORY_TURNS = 6;
+export const MAX_STORED_TURNS = 100;
 
 export const SUGGESTIONS = [
   "Agentic RAG 和普通 RAG 有什么区别？",
@@ -7,6 +8,7 @@ export const SUGGESTIONS = [
 ];
 
 export const ACTION_LABELS: Record<string, string> = {
+  respond: "直接回应，不调用工具",
   answer_from_existing: "直接复用已有证据",
   retrieve_missing: "检索缺失信息",
   fresh_retrieval: "开始新话题检索",

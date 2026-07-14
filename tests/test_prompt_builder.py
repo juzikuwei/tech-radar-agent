@@ -82,3 +82,22 @@ def test_places_conversation_before_current_grounded_evidence() -> None:
     assert messages[2]["content"] == "上一轮回答。"
     assert "故障定位方法能否识别具体失败步骤？" in messages[3]["content"]
     assert "之前的对话只用于理解用户意图" in SYSTEM_PROMPT
+
+
+def test_labels_historical_evidence_without_making_it_current() -> None:
+    messages = build_rag_messages(
+        "请补充上一轮缺少的部分",
+        [make_result(arxiv_id="CURRENT")],
+        conversation_history=(
+            ConversationTurn(
+                "上一轮问题",
+                "上一轮回答 [HISTORICAL]。",
+                ("HISTORICAL",),
+            ),
+        ),
+    )
+
+    assert "<historical_evidence_ids>" in messages[2]["content"]
+    assert "HISTORICAL" in messages[2]["content"]
+    assert "CURRENT" in messages[3]["content"]
+    assert "不代表它们是本轮事实证据" in SYSTEM_PROMPT

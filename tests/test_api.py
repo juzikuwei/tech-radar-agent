@@ -10,7 +10,13 @@ from config.model_settings import ModelSettings
 from ingestion.repository import import_jsonl_snapshot
 from ingestion.snapshot import write_jsonl_snapshot
 from rag.application import RagResult
-from rag.conversation import ConversationDecision
+from rag.conversation import ConversationDecision, MAX_STORED_TURNS
+from rag.conversation_store import (
+    append_conversation_turn,
+    create_conversation,
+    initialize_conversation_store,
+    load_conversation_state,
+)
 from rag.execution_trace import TraceEvent
 from rag.research_agent import ResearchAgentError
 from rag.runtime import RagRuntime
@@ -47,6 +53,7 @@ def make_database(tmp_path: Path) -> Path:
     database_path = tmp_path / "papers.db"
     write_jsonl_snapshot([make_record()], snapshot_path)
     import_jsonl_snapshot(snapshot_path, database_path)
+    initialize_conversation_store(database_path)
     return database_path
 
 
@@ -58,6 +65,12 @@ def make_runtime(database_path: Path) -> RagRuntime:
         settings=ModelSettings("key", "https://example.test", "model"),
         database_path=database_path,
     )
+
+
+def create_client_conversation(client: TestClient) -> str:
+    response = client.post("/conversations")
+    assert response.status_code == 201
+    return str(response.json()["conversation_id"])
 
 
 def test_health_and_knowledge_base_stats(tmp_path: Path) -> None:
@@ -72,16 +85,16 @@ def test_health_and_knowledge_base_stats(tmp_path: Path) -> None:
     assert stats.json() == {"paper_count": 1, "vector_count": 1}
 
 
-def test_allows_local_react_development_origin(tmp_path: Path) -> None:
+def test_allows_local_react_conversation_requests(tmp_path: Path) -> None:
     runtime = make_runtime(make_database(tmp_path))
     app = create_app(lambda: runtime)
 
     with TestClient(app) as client:
         response = client.options(
-            "/chat",
+            "/conversations/example",
             headers={
                 "Origin": "http://127.0.0.1:5173",
-                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Method": "DELETE",
                 "Access-Control-Request-Headers": "content-type",
             },
         )
@@ -92,11 +105,40 @@ def test_allows_local_react_development_origin(tmp_path: Path) -> None:
     )
 
 
-def test_chat_reloads_active_evidence_and_serializes_trace(
-    tmp_path: Path,
-    monkeypatch: object,
-) -> None:
+def test_conversation_crud_returns_complete_history(tmp_path: Path) -> None:
     runtime = make_runtime(make_database(tmp_path))
+    app = create_app(lambda: runtime)
+
+    with TestClient(app) as client:
+        assert client.get("/conversations").json() == []
+        conversation_id = create_client_conversation(client)
+        listed = client.get("/conversations")
+        loaded = client.get(f"/conversations/{conversation_id}")
+        deleted = client.delete(f"/conversations/{conversation_id}")
+        missing = client.get(f"/conversations/{conversation_id}")
+
+    assert listed.json()[0]["title"] == "新对话"
+    assert listed.json()[0]["turn_count"] == 0
+    assert loaded.json()["turns"] == []
+    assert deleted.status_code == 204
+    assert missing.status_code == 404
+
+
+def test_chat_loads_recent_state_and_persists_response(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = make_database(tmp_path)
+    runtime = make_runtime(database_path)
+    conversation = create_conversation(database_path)
+    for index in range(7):
+        append_conversation_turn(
+            database_path,
+            conversation.conversation_id,
+            user_message=f"question {index}",
+            assistant_message=f"answer {index}",
+            paper_ids=("2607.00001",) if index == 6 else (),
+        )
     observed: dict[str, object] = {}
 
     def fake_run_rag(question: str, **kwargs: object) -> RagResult:
@@ -135,35 +177,32 @@ def test_chat_reloads_active_evidence_and_serializes_trace(
     app = create_app(lambda: runtime)
     with TestClient(app) as client:
         response = client.post(
-            "/chat",
-            json={
-                "question": "  follow-up question  ",
-                "conversation_history": [
-                    {
-                        "user_message": "first question",
-                        "assistant_message": "first answer",
-                    }
-                ],
-                "active_evidence_ids": ["2607.00001"],
-            },
+            f"/conversations/{conversation.conversation_id}/chat",
+            json={"question": "  follow-up question  "},
         )
+        stored = client.get(f"/conversations/{conversation.conversation_id}")
 
     assert response.status_code == 200
     body = response.json()
     assert body["answer"] == "grounded answer"
     assert body["papers"][0]["arxiv_id"] == "2607.00001"
     assert body["trace"][0]["stage"] == "answer_generation"
-    assert body["conversation_decision"]["next_action"] == "answer_from_existing"
     assert observed["question"] == "follow-up question"
     history = observed["history"]
-    assert history[0].user_message == "first question"  # type: ignore[index,union-attr]
+    assert len(history) == 6  # type: ignore[arg-type]
+    assert history[0].user_message == "question 1"  # type: ignore[index,union-attr]
     evidence = observed["active_evidence"]
     assert evidence[0].document == "Agent systems\nNormalized abstract"  # type: ignore[index,union-attr]
+    stored_body = stored.json()
+    assert stored_body["turn_count"] == 8
+    assert stored_body["turns"][-1]["assistant_message"] == "grounded answer"
+    assert stored_body["turns"][-1]["paper_ids"] == ["2607.00001"]
+    assert stored_body["turns"][-1]["papers"][0]["rerank_score"] is None
 
 
-def test_chat_stream_emits_trace_before_complete_result(
+def test_chat_stream_emits_trace_then_persists_complete_result(
     tmp_path: Path,
-    monkeypatch: object,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime = make_runtime(make_database(tmp_path))
 
@@ -189,13 +228,13 @@ def test_chat_stream_emits_trace_before_complete_result(
     app = create_app(lambda: runtime)
 
     with TestClient(app) as client:
+        conversation_id = create_client_conversation(client)
         response = client.post(
-            "/chat/stream",
+            f"/conversations/{conversation_id}/chat/stream",
             json={"question": "stream this trace"},
         )
+        stored = client.get(f"/conversations/{conversation_id}")
 
-    assert response.status_code == 200
-    assert response.headers["content-type"].startswith("application/x-ndjson")
     events = [json.loads(line) for line in response.text.splitlines()]
     assert [event["type"] for event in events] == [
         "run_started",
@@ -204,12 +243,12 @@ def test_chat_stream_emits_trace_before_complete_result(
     ]
     assert events[1]["event"]["stage"] == "dense_retrieval"
     assert events[2]["result"]["answer"] == "complete answer"
+    assert stored.json()["turn_count"] == 1
     assert response.headers["x-accel-buffering"] == "no"
 
 
-def test_react_mode_uses_research_agent(tmp_path: Path, monkeypatch: object) -> None:
+def test_react_mode_uses_research_agent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     runtime = make_runtime(make_database(tmp_path))
-
     monkeypatch.setattr(
         chat_service,
         "run_research_agent",
@@ -229,20 +268,20 @@ def test_react_mode_uses_research_agent(tmp_path: Path, monkeypatch: object) -> 
     app = create_app(lambda: runtime)
 
     with TestClient(app) as client:
+        conversation_id = create_client_conversation(client)
         response = client.post(
-            "/chat",
+            f"/conversations/{conversation_id}/chat",
             json={"question": "comparison", "mode": "react"},
         )
 
-    assert response.status_code == 200
     assert response.json()["answer"] == "react answer"
     assert response.json()["mode"] == "react"
     assert response.json()["fallback_used"] is False
 
 
-def test_react_failure_falls_back_and_preserves_trace(
+def test_react_initial_decision_failure_requests_clarification_without_search(
     tmp_path: Path,
-    monkeypatch: object,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime = make_runtime(make_database(tmp_path))
     failed_event = TraceEvent(
@@ -273,61 +312,210 @@ def test_react_failure_falls_back_and_preserves_trace(
     app = create_app(lambda: runtime)
 
     with TestClient(app) as client:
+        conversation_id = create_client_conversation(client)
         response = client.post(
-            "/chat",
+            f"/conversations/{conversation_id}/chat",
+            json={"question": "comparison", "mode": "react"},
+        )
+
+    body = response.json()
+    assert "请明确告诉我" in body["answer"]
+    assert body["fallback_used"] is True
+    assert [event["stage"] for event in body["trace"]] == [
+        "agent_decision",
+        "react_clarification",
+    ]
+    assert body["response_kind"] == "conversation"
+
+
+def test_react_tool_failure_still_falls_back_to_reliable_pipeline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = make_runtime(make_database(tmp_path))
+    failed_event = TraceEvent(
+        stage="agent_tool_observation",
+        label="tool failed",
+        status="failed",
+        duration_ms=4.0,
+        details={"error": "search failed"},
+    )
+    monkeypatch.setattr(
+        chat_service,
+        "run_research_agent",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            ResearchAgentError("search failed", (failed_event,), tool_calls=1)
+        ),
+    )
+    monkeypatch.setattr(
+        chat_service,
+        "run_rag",
+        lambda question, **kwargs: RagResult(
+            question=question,
+            papers=(),
+            answer="pipeline fallback",
+            generation_error=None,
+            trace=(),
+        ),
+    )
+    app = create_app(lambda: runtime)
+
+    with TestClient(app) as client:
+        conversation_id = create_client_conversation(client)
+        response = client.post(
+            f"/conversations/{conversation_id}/chat",
             json={"question": "comparison", "mode": "react"},
         )
 
     body = response.json()
     assert body["answer"] == "pipeline fallback"
-    assert body["fallback_used"] is True
     assert [event["stage"] for event in body["trace"]] == [
-        "agent_decision",
+        "agent_tool_observation",
         "react_fallback",
     ]
 
 
-def test_chat_rejects_unknown_or_duplicate_active_evidence(tmp_path: Path) -> None:
+def test_old_chat_contract_is_removed_and_client_state_is_forbidden(
+    tmp_path: Path,
+) -> None:
     runtime = make_runtime(make_database(tmp_path))
     app = create_app(lambda: runtime)
 
     with TestClient(app) as client:
-        unknown = client.post(
-            "/chat",
+        old_route = client.post("/chat", json={"question": "question"})
+        conversation_id = create_client_conversation(client)
+        old_fields = client.post(
+            f"/conversations/{conversation_id}/chat",
             json={
                 "question": "question",
-                "active_evidence_ids": ["2607.99999"],
-            },
-        )
-        duplicate = client.post(
-            "/chat",
-            json={
-                "question": "question",
-                "active_evidence_ids": ["2607.00001", "2607.00001"],
+                "conversation_history": [],
+                "active_evidence_ids": [],
             },
         )
 
-    assert unknown.status_code == 422
-    assert unknown.json()["detail"] == {
-        "unknown_active_evidence_ids": ["2607.99999"]
+    assert old_route.status_code == 404
+    assert old_fields.status_code == 422
+    error_fields = {
+        tuple(error["loc"])[-1] for error in old_fields.json()["detail"]
     }
-    assert duplicate.status_code == 422
-    assert "duplicates" in duplicate.json()["detail"]
+    assert error_fields == {"conversation_history", "active_evidence_ids"}
 
 
-def test_chat_rejects_more_than_six_conversation_turns(tmp_path: Path) -> None:
-    runtime = make_runtime(make_database(tmp_path))
+def test_chat_rejects_missing_or_full_conversation_before_model_call(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = make_database(tmp_path)
+    runtime = make_runtime(database_path)
+    conversation = create_conversation(database_path)
+    for index in range(MAX_STORED_TURNS):
+        append_conversation_turn(
+            database_path,
+            conversation.conversation_id,
+            user_message=f"question {index}",
+            assistant_message="answer",
+        )
+    monkeypatch.setattr(
+        chat_service,
+        "run_rag",
+        lambda *args, **kwargs: pytest.fail("full conversation must not call RAG"),
+    )
     app = create_app(lambda: runtime)
-    turns = [
-        {"user_message": f"question {index}", "assistant_message": "answer"}
-        for index in range(7)
-    ]
+
+    with TestClient(app) as client:
+        missing = client.post(
+            "/conversations/missing/chat",
+            json={"question": "question"},
+        )
+        full = client.post(
+            f"/conversations/{conversation.conversation_id}/chat",
+            json={"question": "one too many"},
+        )
+        missing_stream = client.post(
+            "/conversations/missing/chat/stream",
+            json={"question": "question"},
+        )
+        full_stream = client.post(
+            f"/conversations/{conversation.conversation_id}/chat/stream",
+            json={"question": "one too many"},
+        )
+
+    assert missing.status_code == 404
+    assert full.status_code == 422
+    assert "100" in full.json()["detail"]
+    assert missing_stream.status_code == 404
+    assert full_stream.status_code == 422
+    assert "100" in full_stream.json()["detail"]
+
+
+def test_generation_failure_does_not_enter_history(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = make_runtime(make_database(tmp_path))
+    monkeypatch.setattr(
+        chat_service,
+        "run_rag",
+        lambda question, **kwargs: RagResult(
+            question=question,
+            papers=(),
+            answer=None,
+            generation_error="provider unavailable",
+            trace=(),
+        ),
+    )
+    app = create_app(lambda: runtime)
+
+    with TestClient(app) as client:
+        conversation_id = create_client_conversation(client)
+        response = client.post(
+            f"/conversations/{conversation_id}/chat",
+            json={"question": "question"},
+        )
+        stored = client.get(f"/conversations/{conversation_id}")
+
+    assert response.status_code == 200
+    assert response.json()["answer"] is None
+    assert stored.json()["turn_count"] == 0
+
+
+def test_direct_response_is_stored_without_clearing_active_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = make_database(tmp_path)
+    runtime = make_runtime(database_path)
+    conversation = create_conversation(database_path)
+    append_conversation_turn(
+        database_path,
+        conversation.conversation_id,
+        user_message="research question",
+        assistant_message="research answer",
+        paper_ids=("2607.00001",),
+    )
+    monkeypatch.setattr(
+        chat_service,
+        "run_rag",
+        lambda question, **kwargs: RagResult(
+            question=question,
+            papers=(),
+            answer="不客气。",
+            generation_error=None,
+            trace=(),
+            response_kind="conversation",
+        ),
+    )
+    app = create_app(lambda: runtime)
 
     with TestClient(app) as client:
         response = client.post(
-            "/chat",
-            json={"question": "follow-up", "conversation_history": turns},
+            f"/conversations/{conversation.conversation_id}/chat",
+            json={"question": "谢谢"},
         )
+        stored = client.get(f"/conversations/{conversation.conversation_id}")
 
-    assert response.status_code == 422
-    assert "at most 6 turns" in response.json()["detail"]
+    state = load_conversation_state(database_path, conversation.conversation_id)
+    assert response.json()["response_kind"] == "conversation"
+    assert stored.json()["turns"][-1]["response_kind"] == "conversation"
+    assert stored.json()["turns"][-1]["paper_ids"] == []
+    assert state.active_evidence_ids == ("2607.00001",)

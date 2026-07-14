@@ -14,6 +14,7 @@ interface ConversationFeedProps {
   liveTrace: TraceEvent[];
   requestError: string | null;
   failedResult: ChatResponse | null;
+  loadingConversation: boolean;
   conversationEndRef: RefObject<HTMLDivElement | null>;
   onSuggestion: (value: string) => void;
 }
@@ -25,12 +26,17 @@ export function ConversationFeed({
   liveTrace,
   requestError,
   failedResult,
+  loadingConversation,
   conversationEndRef,
   onSuggestion,
 }: ConversationFeedProps) {
   return (
     <section className="conversation" aria-live="polite">
-      {!turns.length && !pendingQuestion && !requestError ? (
+      {loadingConversation ? (
+        <div className="session-loading">正在加载会话…</div>
+      ) : null}
+
+      {!loadingConversation && !turns.length && !pendingQuestion && !requestError ? (
         <EmptyState onSuggestion={onSuggestion} />
       ) : null}
 
@@ -44,7 +50,7 @@ export function ConversationFeed({
 
       {requestError ? (
         <div className="error-card" role="alert">
-          <strong>本轮没有进入对话历史</strong>
+          <strong>当前操作未完成</strong>
           <p>{requestError}</p>
           {failedResult ? <ResultDetails result={failedResult} /> : null}
         </div>

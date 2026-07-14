@@ -8,7 +8,11 @@ from chromadb.api.models.Collection import Collection
 
 from config.model_settings import ModelSettings
 from rag.application import RagResult, answer_from_results
-from rag.conversation import ConversationTurn, bounded_history
+from rag.conversation import (
+    ConversationTurn,
+    bounded_history,
+    generate_conversational_response,
+)
 from rag.execution_trace import TraceEvent, TraceEventCallback, TraceRecorder, start_timer
 from rag.hybrid_search import hybrid_search
 from rag.keyword_search import DEFAULT_DATABASE_PATH
@@ -32,9 +36,16 @@ OBSERVATION_EXCERPT_LIMIT = 300
 class ResearchAgentError(RuntimeError):
     """A planning or tool failure that should fall back to the pipeline."""
 
-    def __init__(self, message: str, trace: tuple[TraceEvent, ...]) -> None:
+    def __init__(
+        self,
+        message: str,
+        trace: tuple[TraceEvent, ...],
+        *,
+        tool_calls: int = 0,
+    ) -> None:
         super().__init__(message)
         self.trace = trace
+        self.tool_calls = tool_calls
 
 
 @dataclass(frozen=True)
@@ -113,7 +124,11 @@ def run_research_agent(
                     "round": search_count + web_search_count + 1,
                 },
             )
-            raise ResearchAgentError(str(error), trace.events) from error
+            raise ResearchAgentError(
+                str(error),
+                trace.events,
+                tool_calls=search_count + web_search_count,
+            ) from error
 
         is_initial_plan = not plan
         plan = decision.subquestions
@@ -140,6 +155,21 @@ def run_research_agent(
         )
 
         action = decision.next_action
+        if action.type == "respond":
+            trace.record(
+                stage="agent_respond",
+                label="研究 Agent 选择直接对话回应",
+                details={"reason_summary": decision.reason_summary},
+            )
+            return _generate_conversation_response(
+                clean_question,
+                settings=settings,
+                client=client,
+                on_retry=on_retry,
+                history=history,
+                trace=trace,
+            )
+
         if action.type == "web_search":
             web_search_count += 1
             _run_web_search(
@@ -185,7 +215,11 @@ def run_research_agent(
                         "error": str(error),
                     },
                 )
-                raise ResearchAgentError(str(error), trace.events) from error
+                raise ResearchAgentError(
+                    str(error),
+                    trace.events,
+                    tool_calls=search_count + web_search_count + 1,
+                ) from error
 
             search_count += 1
             observation = SearchObservation(
@@ -316,6 +350,61 @@ def _generate_final_answer(
         retrieval_attempts=search_count,
         standalone_question=question,
         trace=trace.events,
+    )
+
+
+def _generate_conversation_response(
+    question: str,
+    *,
+    settings: ModelSettings,
+    client: Any | None,
+    on_retry: StatusCallback | None,
+    history: tuple[ConversationTurn, ...],
+    trace: TraceRecorder,
+) -> RagResult:
+    started_at = start_timer()
+    try:
+        answer = generate_conversational_response(
+            question,
+            history,
+            settings=settings,
+            client=client,
+            on_retry=on_retry,
+        )
+    except LLMRequestError as error:
+        trace.record(
+            stage="conversation_response",
+            label="DeepSeek 生成直接对话回应",
+            status="failed",
+            started_at=started_at,
+            details={"error": str(error)},
+        )
+        return RagResult(
+            question=question,
+            papers=(),
+            answer=None,
+            generation_error=str(error),
+            retrieval_attempts=0,
+            standalone_question=question,
+            trace=trace.events,
+            response_kind="conversation",
+        )
+
+    trace.record(
+        stage="conversation_response",
+        label="DeepSeek 生成直接对话回应",
+        started_at=started_at,
+        details={"answer_char_count": len(answer)},
+    )
+    return RagResult(
+        question=question,
+        papers=(),
+        answer=answer,
+        generation_error=None,
+        retrieval_attempts=0,
+        standalone_question=question,
+        trace=trace.events,
+        response_kind="conversation",
     )
 
 

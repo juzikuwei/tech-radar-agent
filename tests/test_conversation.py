@@ -47,20 +47,39 @@ def test_bounded_history_keeps_six_complete_turns() -> None:
 def test_decision_prompt_contains_history_question_and_active_evidence() -> None:
     messages = build_conversation_decision_messages(
         "它能定位到具体步骤吗？",
-        [ConversationTurn("如何定位负责的 Agent？", "使用故障定位方法。")],
+        [
+            ConversationTurn(
+                "如何定位负责的 Agent？",
+                "使用故障定位方法。",
+                ("2607.00001",),
+            )
+        ],
         [make_paper()],
     )
     payload = json.loads(messages[1]["content"])
 
     assert payload["current_question"] == "它能定位到具体步骤吗？"
     assert payload["conversation_history"][0]["user"] == "如何定位负责的 Agent？"
+    assert payload["conversation_history"][0]["evidence_ids"] == ["2607.00001"]
     assert payload["active_evidence"][0]["arxiv_id"] == "2607.00001"
-    assert "不允许直接拒答" in messages[0]["content"]
+    assert "respond" in messages[0]["content"]
 
 
 @pytest.mark.parametrize(
     ("payload", "expected_action"),
     [
+        (
+            {
+                "coverage": "not_applicable",
+                "next_action": "respond",
+                "reason": "用户只是在表达感谢",
+                "standalone_question": "用户感谢上一轮回答",
+                "reusable_arxiv_ids": [],
+                "missing_aspects": [],
+                "retrieval_query": None,
+            },
+            "respond",
+        ),
         (
             {
                 "coverage": "sufficient",
@@ -156,3 +175,54 @@ def test_decision_cannot_invent_reusable_evidence_ids() -> None:
             settings=SETTINGS,
             client=client,
         )
+
+
+class RepairingConversationCompletions:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def create(self, **_: object) -> object:
+        self.calls += 1
+        if self.calls == 1:
+            payload = {
+                "coverage": "none",
+                "next_action": "fresh_retrieval",
+                "reason": "invalid missing query",
+                "standalone_question": "用户在表达不满",
+                "reusable_arxiv_ids": [],
+                "missing_aspects": [],
+                "retrieval_query": None,
+            }
+        else:
+            payload = {
+                "coverage": "not_applicable",
+                "next_action": "respond",
+                "reason": "用户在反馈上一轮回答",
+                "standalone_question": "回应用户对上一轮回答的不满",
+                "reusable_arxiv_ids": [],
+                "missing_aspects": [],
+                "retrieval_query": None,
+            }
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content=json.dumps(payload))
+                )
+            ]
+        )
+
+
+def test_conversation_decision_repairs_invalid_action_once() -> None:
+    completions = RepairingConversationCompletions()
+    client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+
+    decision = decide_conversation_action(
+        "感觉你在乱说",
+        [ConversationTurn("question", "answer")],
+        [make_paper()],
+        settings=SETTINGS,
+        client=client,
+    )
+
+    assert completions.calls == 2
+    assert decision.next_action == "respond"

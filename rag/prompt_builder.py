@@ -20,6 +20,7 @@ SYSTEM_PROMPT = """你是一个基于 arXiv 论文摘要回答问题的研究助
 8. 输出可直接展示给用户的中文文本，不要输出 JSON。
 9. 之前的对话只用于理解用户意图，不得把助手之前的回答当作事实证据；事实仍必须来自本轮 <retrieved_papers>。
 10. 比较问题可以综合分别描述两个对象的不同论文。分别引用每一侧的证据，并明确使用“综合这些摘要可以归纳”等措辞；没有直接对比研究时，不得声称某篇论文做过正面对比。
+11. 历史助手消息后的 <historical_evidence_ids> 只说明那些 ID 属于对应历史轮次，不代表它们是本轮事实证据，也不得据此判断历史回答正确或错误。
 """
 
 
@@ -57,10 +58,17 @@ def build_rag_messages(
     )
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     for turn in bounded_history(conversation_history):
+        assistant_content = turn.assistant_message
+        if turn.evidence_ids:
+            assistant_content += (
+                "\n\n<historical_evidence_ids>\n"
+                f"{json.dumps(turn.evidence_ids, ensure_ascii=False)}\n"
+                "</historical_evidence_ids>"
+            )
         messages.extend(
             [
                 {"role": "user", "content": turn.user_message},
-                {"role": "assistant", "content": turn.assistant_message},
+                {"role": "assistant", "content": assistant_content},
             ]
         )
     messages.append({"role": "user", "content": user_content})

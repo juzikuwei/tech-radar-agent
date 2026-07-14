@@ -25,9 +25,13 @@ function App() {
       <Sidebar
         stats={stats}
         statsError={statsError}
-        turnCount={chat.turns.length}
-        canReset={chat.canReset}
-        onReset={chat.resetConversation}
+        conversations={chat.conversations}
+        activeConversationId={chat.activeConversationId}
+        activeTurnCount={chat.activeConversation?.turn_count ?? chat.turns.length}
+        managingConversations={chat.managingConversations}
+        onNewConversation={chat.startNewConversation}
+        onSelectConversation={chat.selectConversation}
+        onDeleteConversation={chat.removeConversation}
         mode={chat.mode}
         onModeChange={chat.setMode}
       />
@@ -40,12 +44,13 @@ function App() {
           liveTrace={chat.liveTrace}
           requestError={chat.requestError}
           failedResult={chat.failedResult}
+          loadingConversation={chat.loadingConversation}
           conversationEndRef={conversationEndRef}
           onSuggestion={chat.submitQuestion}
         />
         <ChatComposer
           draft={chat.draft}
-          pending={Boolean(chat.pendingQuestion)}
+          pending={Boolean(chat.pendingQuestion) || !chat.isReady}
           onDraftChange={chat.setDraft}
           onSubmit={chat.submitQuestion}
         />

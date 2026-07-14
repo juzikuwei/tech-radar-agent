@@ -63,6 +63,8 @@ button:disabled { cursor: not-allowed; opacity: .45; }
   border-right: 1px solid #f0f1f3;
 }
 
+.sidebar-main { min-height: 0; display: flex; flex: 1; flex-direction: column; }
+
 .sidebar-brand {
   display: flex;
   align-items: center;
@@ -106,6 +108,18 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 
 .new-chat-button:not(:disabled):hover { background: #e7ebff; border-color: #d4dbff; }
 .new-chat-button > span { font-size: 18px; font-weight: 400; }
+.conversation-sidebar-section { min-height: 0; max-height: 34vh; margin-top: 16px; display: flex; flex-direction: column; }
+.conversation-list { min-height: 0; display: grid; gap: 5px; overflow-y: auto; }
+.conversation-list-item { display: flex; align-items: stretch; border: 1px solid transparent; border-radius: 10px; }
+.conversation-list-item:hover { background: #f0f2f6; }
+.conversation-list-item.active { background: #fff; border-color: #e5e7ee; box-shadow: 0 3px 12px rgba(45,52,70,.04); }
+.conversation-select { min-width: 0; flex: 1; padding: 9px 8px 9px 10px; text-align: left; background: transparent; border: 0; }
+.conversation-select strong, .conversation-select span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conversation-select strong { color: #555c68; font-size: 11px; }
+.conversation-select span { margin-top: 4px; color: #969ca7; font-size: 9px; }
+.conversation-list-item.active .conversation-select strong { color: var(--accent-dark); }
+.conversation-delete { width: 31px; color: #a4a9b2; background: transparent; border: 0; border-radius: 8px; font-size: 17px; }
+.conversation-delete:hover { color: #b94a56; background: #fff0f1; }
 .mode-picker { margin-top: 14px; display: grid; gap: 6px; }
 .mode-picker button { width: 100%; padding: 10px 11px; text-align: left; color: #767d89; background: transparent; border: 1px solid transparent; border-radius: 10px; }
 .mode-picker button strong, .mode-picker button span { display: block; }
@@ -125,7 +139,7 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 
 .sidebar-footer { padding: 0 4px 3px; }
 .sidebar-section-label { padding-left: 7px; }
-.status-stack { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; }
+.status-stack { display: grid; grid-template-columns: repeat(2, 1fr); gap: 5px; }
 .status-card { min-width: 0; padding: 9px 7px; background: #fff; border: 1px solid #eff0f2; border-radius: 9px; }
 .status-card span { display: block; color: #9ca1aa; font-size: 9px; }
 .status-card strong { display: block; margin-top: 4px; overflow: hidden; color: #4a4f58; font-size: 12px; text-overflow: ellipsis; }
@@ -167,6 +181,7 @@ button:disabled { cursor: not-allowed; opacity: .45; }
   margin: 0 auto;
   padding: 42px 0 190px;
 }
+.session-loading { margin: 70px auto; color: var(--muted); font-size: 13px; }
 
 .empty-state {
   min-height: calc(100vh - 300px);

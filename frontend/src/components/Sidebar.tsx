@@ -1,13 +1,17 @@
-import { MAX_HISTORY_TURNS } from "../constants";
-import type { ChatMode, KnowledgeBaseStats } from "../types";
+import { MAX_HISTORY_TURNS, MAX_STORED_TURNS } from "../constants";
+import type { ChatMode, ConversationSummary, KnowledgeBaseStats } from "../types";
 
 
 interface SidebarProps {
   stats: KnowledgeBaseStats | null;
   statsError: string | null;
-  turnCount: number;
-  canReset: boolean;
-  onReset: () => void;
+  conversations: ConversationSummary[];
+  activeConversationId: string | null;
+  activeTurnCount: number;
+  managingConversations: boolean;
+  onNewConversation: () => void;
+  onSelectConversation: (conversationId: string) => void;
+  onDeleteConversation: (conversationId: string) => void;
   mode: ChatMode;
   onModeChange: (mode: ChatMode) => void;
 }
@@ -16,9 +20,13 @@ interface SidebarProps {
 export function Sidebar({
   stats,
   statsError,
-  turnCount,
-  canReset,
-  onReset,
+  conversations,
+  activeConversationId,
+  activeTurnCount,
+  managingConversations,
+  onNewConversation,
+  onSelectConversation,
+  onDeleteConversation,
   mode,
   onModeChange,
 }: SidebarProps) {
@@ -36,12 +44,47 @@ export function Sidebar({
         <button
           className="new-chat-button"
           type="button"
-          onClick={onReset}
-          disabled={!canReset}
+          onClick={onNewConversation}
+          disabled={managingConversations}
         >
           <span aria-hidden="true">＋</span>
           新对话
         </button>
+
+        <section className="conversation-sidebar-section" aria-label="会话列表">
+          <p className="sidebar-section-label">会话</p>
+          <div className="conversation-list">
+            {conversations.map((conversation) => (
+              <div
+                className={
+                  conversation.conversation_id === activeConversationId
+                    ? "conversation-list-item active"
+                    : "conversation-list-item"
+                }
+                key={conversation.conversation_id}
+              >
+                <button
+                  type="button"
+                  className="conversation-select"
+                  onClick={() => onSelectConversation(conversation.conversation_id)}
+                  disabled={managingConversations}
+                >
+                  <strong>{conversation.title}</strong>
+                  <span>{conversation.turn_count} 轮</span>
+                </button>
+                <button
+                  type="button"
+                  className="conversation-delete"
+                  aria-label={`删除会话 ${conversation.title}`}
+                  onClick={() => onDeleteConversation(conversation.conversation_id)}
+                  disabled={managingConversations}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
 
         <div className="mode-picker" role="group" aria-label="回答模式">
           <button
@@ -63,15 +106,10 @@ export function Sidebar({
             <span>固定判断，最多两次检索</span>
           </button>
         </div>
-
-        <div className="sidebar-note">
-          <p>当前能力</p>
-          <span>检索本地论文、生成引用回答，并展示完整 Agent 执行过程。</span>
-        </div>
       </div>
 
       <div className="sidebar-footer">
-        <p className="sidebar-section-label">知识库状态</p>
+        <p className="sidebar-section-label">知识库与会话状态</p>
         <div className="status-stack" aria-label="系统状态">
           <StatusCard
             label="论文"
@@ -82,8 +120,12 @@ export function Sidebar({
             value={stats ? stats.vector_count.toLocaleString("zh-CN") : "—"}
           />
           <StatusCard
-            label="上下文"
-            value={`${Math.min(turnCount, MAX_HISTORY_TURNS)}/${MAX_HISTORY_TURNS}`}
+            label="已存"
+            value={`${activeTurnCount}/${MAX_STORED_TURNS}`}
+          />
+          <StatusCard
+            label="模型窗口"
+            value={`${Math.min(activeTurnCount, MAX_HISTORY_TURNS)}/${MAX_HISTORY_TURNS}`}
           />
         </div>
         <p className={statsError ? "service-state error" : "service-state"}>

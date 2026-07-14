@@ -61,6 +61,39 @@ def test_finish_requires_evidence_and_complete_plan() -> None:
             evidence_count=0,
         )
 
+
+def test_respond_is_only_valid_for_conversation_messages() -> None:
+    payload = {
+        "question_type": "conversation",
+        "reason_summary": "用户在表达反馈，不需要论文事实",
+        "subquestions": [
+            {"id": "sq1", "question": "回应用户反馈", "status": "covered"}
+        ],
+        "next_action": {
+            "type": "respond",
+            "target_subquestion_id": None,
+            "query": None,
+            "top_k": None,
+        },
+    }
+
+    decision = parse_research_decision(
+        json.dumps(payload, ensure_ascii=False),
+        remaining_searches=4,
+        search_count=0,
+        evidence_count=0,
+    )
+    assert decision.next_action.type == "respond"
+
+    payload["question_type"] = "single_fact"
+    with pytest.raises(ResearchDecisionError, match="conversation question_type"):
+        parse_research_decision(
+            json.dumps(payload, ensure_ascii=False),
+            remaining_searches=4,
+            search_count=0,
+            evidence_count=0,
+        )
+
     with pytest.raises(ResearchDecisionError, match="all subquestions covered"):
         parse_research_decision(
             decision_payload(action_type="finish", statuses=("covered", "pending")),
@@ -205,7 +238,11 @@ def test_research_messages_expose_web_search_budget() -> None:
     payload = json.loads(messages[1]["content"])
     assert payload["web_search_available"] is True
     assert payload["remaining_web_searches"] == 2
-    assert payload["allowed_actions"] == ["search_papers", "web_search"]
+    assert payload["allowed_actions"] == [
+        "respond",
+        "search_papers",
+        "web_search",
+    ]
     assert "web_search" in messages[0]["content"]
 
 
@@ -223,4 +260,4 @@ def test_allowed_actions_shrink_with_budgets_and_state() -> None:
     )
 
     payload = json.loads(messages[1]["content"])
-    assert payload["allowed_actions"] == ["search_papers", "refuse"]
+    assert payload["allowed_actions"] == ["respond", "search_papers", "refuse"]

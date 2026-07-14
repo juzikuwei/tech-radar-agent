@@ -1326,3 +1326,102 @@ Revisit if web snippets ever need to become citable evidence (requires new
 guardrails and provenance), if Tavily reachability or quota degrades (swap the
 `WebSearchClient` backend), or when stage 14 adds input filtering that should
 also wrap web observations.
+
+---
+
+## ADR-026: Persist bounded conversations on the server
+
+- **Status:** Accepted
+- **Date:** 2026-07-13
+
+**Decision**
+
+Persist browser conversations in the existing SQLite database with two new
+tables: `conversations` for UUID, title, and timestamps, and
+`conversation_turns` for complete user-assistant exchanges plus the final
+paper IDs. Keep at most 100 complete turns per conversation, but continue to
+inject only the six most recent turns into conversation decisions and answer
+generation. Derive active evidence from the newest stored turn and reload the
+corresponding papers from SQLite.
+
+Replace the client-state `POST /chat` and `POST /chat/stream` contracts with
+conversation-scoped endpoints under `/conversations/{conversation_id}`. Add
+create, list, full-history, and delete endpoints. The client now sends only the
+question, `top_k`, and mode. Do not keep the old contract in parallel. Name a
+conversation from its first stored question, truncated to 50 characters. At
+100 turns, reject the next request and ask the user to create a new
+conversation.
+
+Store successful answers and grounded refusals as complete turns. Do not store
+provider or generation failures. In the streaming path, finish persistence in
+the producer thread before emitting the terminal result, even if the browser
+has stopped consuming the response. Persist text and paper IDs, not old Trace
+events or ranking scores; history reloads current paper metadata from SQLite.
+
+**Context**
+
+ADR-017 and ADR-018 deliberately kept the first FastAPI and React boundary
+stateless, with recent history and active evidence owned by browser memory.
+That made the first migration small, but a refresh erased the conversation,
+only one conversation could exist, and increasing stored history would have
+made every request upload more client-controlled state. Both ADRs named durable
+sessions as their migration trigger, which is now reached.
+
+The 100-turn product requirement contains two separate limits. Durable storage
+must retain history for navigation, while the model window must stay bounded
+for cost and relevance. Sending all 100 turns to both the evidence controller
+and answer model would increase token cost and dilute the current question.
+
+**Alternatives considered**
+
+- Store conversations in browser local storage: survives refreshes on one
+  browser, but still trusts client history and cannot support later server-side
+  summarization or long-term memory cleanly.
+- Keep the old `/chat` contract beside the new one: avoids an immediate frontend
+  migration, but preserves two trust models and two service assembly paths with
+  no external consumer requiring compatibility.
+- Store separate user and assistant message rows: supports editing and
+  branching later, but complicates the current invariant that only complete,
+  accepted turns enter history.
+- Copy active evidence IDs onto the conversation row: makes reads direct, but
+  duplicates data already determined by the newest complete turn.
+- Inject all stored turns into the model: appears to provide long memory, but
+  creates unbounded cost and attention noise rather than a controlled memory
+  design.
+
+**Reason**
+
+Complete-turn persistence matches the existing `ConversationTurn` domain
+model and ADR-015 failure semantics. A server-owned UUID contract removes the
+client-history trust boundary, gives React durable multi-session behavior, and
+provides the minimum source data needed for the next rolling-summary stage.
+Separating the 100-turn storage cap from the six-turn model window makes both
+limits explicit and independently testable.
+
+**Consequences**
+
+- Browser refresh, conversation switching, and service restart preserve up to
+  100 turns per conversation.
+- Chat requests perform SQLite reads before RAG execution and one transaction
+  after a completed answer.
+- The frontend can replay text and citations, but old request-local Trace and
+  ranking scores are intentionally unavailable after reload.
+- A seventh or later turn still gives the model only the six most recent
+  complete turns and the newest turn's first five evidence papers.
+- The old `/chat` routes return 404, and requests that try to upload history or
+  active evidence to the new contract fail validation.
+- This is local single-user persistence; authentication, ownership, editing,
+  branching, and cross-device identity remain out of scope.
+- A turn deleted concurrently with a still-running streamed request may cause
+  that request's final persistence to fail because its conversation no longer
+  exists.
+
+**Review or migration trigger**
+
+Add a rolling summary when important facts older than six turns must remain
+visible inside one conversation. Revisit the 100-turn policy if real use needs
+archival export, automatic rotation, or a larger limit. Introduce user and
+ownership columns before authentication or remote multi-user deployment.
+Stage 13 may read these completed turns to extract cross-conversation memory,
+but must use a separate schema and recall policy rather than widening the chat
+window.

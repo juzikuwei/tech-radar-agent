@@ -1,14 +1,7 @@
-export interface ConversationTurnInput {
-  user_message: string;
-  assistant_message: string;
-}
-
 export type ChatMode = "pipeline" | "react";
 
 export interface ChatRequest {
   question: string;
-  conversation_history: ConversationTurnInput[];
-  active_evidence_ids: string[];
   top_k: number;
   mode: ChatMode;
 }
@@ -52,6 +45,7 @@ export interface ChatResponse {
   retrieval_attempts: number;
   standalone_question: string | null;
   conversation_decision: ConversationDecision | null;
+  response_kind: "research" | "conversation";
   mode: ChatMode;
   fallback_used: boolean;
 }
@@ -67,9 +61,33 @@ export interface KnowledgeBaseStats {
   vector_count: number;
 }
 
+export interface ConversationSummary {
+  conversation_id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  turn_count: number;
+}
+
+export interface PersistedConversationTurn {
+  turn_id: number;
+  user_message: string;
+  assistant_message: string;
+  paper_ids: string[];
+  papers: Paper[];
+  response_kind: "research" | "conversation";
+  created_at: string;
+}
+
+export interface Conversation extends ConversationSummary {
+  turns: PersistedConversationTurn[];
+}
+
 export interface CompletedTurn {
   id: string;
   question: string;
   answer: string;
-  result: ChatResponse;
+  papers: Paper[];
+  responseKind: "research" | "conversation";
+  result: ChatResponse | null;
 }

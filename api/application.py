@@ -5,10 +5,11 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.routers.chat import router as chat_router
+from api.routers.conversations import router as conversations_router
 from api.routers.system import router as system_router
 from api.runtime import RuntimeLoader
 from rag.runtime import load_rag_runtime
+from rag.conversation_store import initialize_conversation_store
 
 
 LOCAL_FRONTEND_ORIGINS = (
@@ -22,7 +23,9 @@ def create_app(runtime_loader: RuntimeLoader = load_rag_runtime) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        app.state.runtime = runtime_loader()
+        runtime = runtime_loader()
+        initialize_conversation_store(runtime.database_path)
+        app.state.runtime = runtime
         yield
 
     app = FastAPI(
@@ -34,9 +37,9 @@ def create_app(runtime_loader: RuntimeLoader = load_rag_runtime) -> FastAPI:
         CORSMiddleware,
         allow_origins=list(LOCAL_FRONTEND_ORIGINS),
         allow_credentials=False,
-        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
         allow_headers=["Content-Type"],
     )
     app.include_router(system_router)
-    app.include_router(chat_router)
+    app.include_router(conversations_router)
     return app

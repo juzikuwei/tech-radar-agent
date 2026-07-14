@@ -133,6 +133,51 @@ def test_research_agent_decomposes_comparison_and_combines_searches(
     assert "agent_finish" in stages
 
 
+def test_research_agent_responds_to_feedback_without_tools(
+    monkeypatch: object,
+) -> None:
+    monkeypatch.setattr(
+        "rag.research_agent.decide_research_action",
+        lambda *args, **kwargs: ResearchDecision(
+            question_type="conversation",
+            reason_summary="用户在反馈上一轮回答",
+            subquestions=(
+                ResearchSubquestion("sq1", "回应用户反馈", "covered"),
+            ),
+            next_action=ResearchAction("respond"),
+        ),
+    )
+    monkeypatch.setattr(
+        "rag.research_agent.hybrid_search",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("feedback must not search papers")
+        ),
+    )
+    monkeypatch.setattr(
+        "rag.research_agent.generate_conversational_response",
+        lambda *args, **kwargs: "你说得对。你希望我检查哪一个具体结论？",
+    )
+
+    result = run_research_agent(
+        "感觉你在乱说",
+        top_k=5,
+        collection=object(),  # type: ignore[arg-type]
+        embedder=object(),  # type: ignore[arg-type]
+        reranker=FakeReranker(),
+        settings=ModelSettings("key", "https://example.test", "model"),
+    )
+
+    assert result.answer == "你说得对。你希望我检查哪一个具体结论？"
+    assert result.papers == ()
+    assert result.retrieval_attempts == 0
+    assert result.response_kind == "conversation"
+    assert [event.stage for event in result.trace] == [
+        "agent_plan",
+        "agent_respond",
+        "conversation_response",
+    ]
+
+
 def test_research_agent_returns_grounded_refusal_after_search(
     monkeypatch: object,
 ) -> None:

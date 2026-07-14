@@ -22,9 +22,15 @@ from ingestion.repository import load_papers_by_arxiv_ids
 from rag.application import RagResult, run_rag
 from rag.conversation import (
     ConversationDecision,
-    ConversationTurn,
-    MAX_ACTIVE_EVIDENCE,
-    MAX_CONVERSATION_TURNS,
+    MAX_STORED_TURNS,
+    SAFE_CLARIFICATION_RESPONSE,
+)
+from rag.conversation_store import (
+    ConversationNotFoundError,
+    ConversationState,
+    ConversationTurnLimitError,
+    append_conversation_turn,
+    load_conversation_state,
 )
 from rag.execution_trace import TraceEvent, TraceEventCallback
 from rag.search import SearchResult
@@ -40,19 +46,24 @@ StreamItem: TypeAlias = tuple[Literal["trace"], TraceEvent] | tuple[
 
 
 def execute_chat(
+    conversation_id: str,
     payload: ChatRequest,
     runtime: RagRuntime,
     *,
     on_trace: TraceEventCallback | None = None,
 ) -> ChatResponse:
-    """Validate bounded client state and run the shared RAG application."""
+    """Load trusted conversation state, run RAG, and persist a completed turn."""
     question = payload.question.strip()
     if not question:
         raise HTTPException(status_code=422, detail="question must not be empty")
 
-    history = _build_history(payload)
-    active_ids = _validate_active_ids(payload.active_evidence_ids)
-    active_evidence = _load_active_evidence(runtime.database_path, active_ids)
+    state = _load_chat_state(conversation_id, runtime)
+
+    history = state.recent_turns
+    active_evidence = _load_active_evidence(
+        runtime.database_path,
+        state.active_evidence_ids,
+    )
     fallback_used = False
     if payload.mode == "react":
         try:
@@ -70,36 +81,61 @@ def execute_chat(
                 web_search_client=runtime.web_search_client,
             )
         except Exception as error:
-            LOGGER.warning("Research Agent failed; falling back to pipeline: %s", error)
+            LOGGER.warning("Research Agent failed: %s", error)
             fallback_used = True
             research_trace = (
                 error.trace if isinstance(error, ResearchAgentError) else ()
             )
-            fallback_event = TraceEvent(
-                stage="react_fallback",
-                label="研究 Agent 降级到可靠管线",
-                status="failed",
-                duration_ms=0.0,
-                details={"error": str(error)},
-            )
-            if on_trace is not None:
-                on_trace(fallback_event)
-            fallback_result = run_rag(
-                question,
-                top_k=payload.top_k,
-                collection=runtime.collection,
-                embedder=runtime.embedder,
-                reranker=runtime.reranker,
-                database_path=runtime.database_path,
-                settings=runtime.settings,
-                conversation_history=history,
-                active_evidence=active_evidence,
-                on_trace=on_trace,
-            )
-            result = replace(
-                fallback_result,
-                trace=(*research_trace, fallback_event, *fallback_result.trace),
-            )
+            if isinstance(error, ResearchAgentError) and error.tool_calls == 0:
+                clarification_event = TraceEvent(
+                    stage="react_clarification",
+                    label="研究 Agent 决策失败后请求澄清",
+                    status="failed",
+                    duration_ms=0.0,
+                    details={"error": str(error)},
+                )
+                if on_trace is not None:
+                    on_trace(clarification_event)
+                result = RagResult(
+                    question=question,
+                    papers=(),
+                    answer=SAFE_CLARIFICATION_RESPONSE,
+                    generation_error=None,
+                    retrieval_attempts=0,
+                    standalone_question=question,
+                    trace=(*research_trace, clarification_event),
+                    response_kind="conversation",
+                )
+            else:
+                fallback_event = TraceEvent(
+                    stage="react_fallback",
+                    label="研究 Agent 降级到可靠管线",
+                    status="failed",
+                    duration_ms=0.0,
+                    details={"error": str(error)},
+                )
+                if on_trace is not None:
+                    on_trace(fallback_event)
+                fallback_result = run_rag(
+                    question,
+                    top_k=payload.top_k,
+                    collection=runtime.collection,
+                    embedder=runtime.embedder,
+                    reranker=runtime.reranker,
+                    database_path=runtime.database_path,
+                    settings=runtime.settings,
+                    conversation_history=history,
+                    active_evidence=active_evidence,
+                    on_trace=on_trace,
+                )
+                result = replace(
+                    fallback_result,
+                    trace=(
+                        *research_trace,
+                        fallback_event,
+                        *fallback_result.trace,
+                    ),
+                )
     else:
         result = run_rag(
             question,
@@ -113,14 +149,53 @@ def execute_chat(
             active_evidence=active_evidence,
             on_trace=on_trace,
         )
-    return build_chat_response(
+    response = build_chat_response(
         result,
         mode=payload.mode,
         fallback_used=fallback_used,
     )
+    if response.answer is not None:
+        try:
+            append_conversation_turn(
+                runtime.database_path,
+                conversation_id,
+                user_message=question,
+                assistant_message=response.answer,
+                paper_ids=tuple(paper.arxiv_id for paper in response.papers),
+                response_kind=response.response_kind,
+                active_evidence_ids=(
+                    None
+                    if response.response_kind == "conversation"
+                    else tuple(
+                        paper.arxiv_id for paper in response.papers[:5]
+                    )
+                ),
+            )
+        except ConversationNotFoundError as error:
+            raise HTTPException(
+                status_code=404,
+                detail="conversation not found",
+            ) from error
+        except ConversationTurnLimitError as error:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"该会话已达到 {MAX_STORED_TURNS} 轮上限，请新建会话后继续。"
+                ),
+            ) from error
+    return response
 
 
-def stream_chat(payload: ChatRequest, runtime: RagRuntime) -> Iterator[str]:
+def validate_chat_conversation(conversation_id: str, runtime: RagRuntime) -> None:
+    """Reject a missing or full conversation before streaming headers start."""
+    _load_chat_state(conversation_id, runtime)
+
+
+def stream_chat(
+    conversation_id: str,
+    payload: ChatRequest,
+    runtime: RagRuntime,
+) -> Iterator[str]:
     """Yield completed trace stages followed by one complete chat result."""
     items: Queue[StreamItem | None] = Queue()
 
@@ -129,7 +204,12 @@ def stream_chat(payload: ChatRequest, runtime: RagRuntime) -> Iterator[str]:
 
     def produce() -> None:
         try:
-            result = execute_chat(payload, runtime, on_trace=emit_trace)
+            result = execute_chat(
+                conversation_id,
+                payload,
+                runtime,
+                on_trace=emit_trace,
+            )
             items.put(("result", result))
         except HTTPException as error:
             items.put(("error", _stream_error_message(error.detail)))
@@ -181,65 +261,29 @@ def _stream_error_message(detail: object) -> str:
     return json.dumps(detail, ensure_ascii=False)
 
 
-def _build_history(payload: ChatRequest) -> tuple[ConversationTurn, ...]:
-    if len(payload.conversation_history) > MAX_CONVERSATION_TURNS:
+def _load_chat_state(
+    conversation_id: str,
+    runtime: RagRuntime,
+) -> ConversationState:
+    try:
+        state = load_conversation_state(runtime.database_path, conversation_id)
+    except ConversationNotFoundError as error:
+        raise HTTPException(status_code=404, detail="conversation not found") from error
+    if state.summary.turn_count >= MAX_STORED_TURNS:
         raise HTTPException(
             status_code=422,
             detail=(
-                "conversation_history supports at most "
-                f"{MAX_CONVERSATION_TURNS} turns"
+                f"该会话已达到 {MAX_STORED_TURNS} 轮上限，请新建会话后继续。"
             ),
         )
-    history = tuple(
-        ConversationTurn(
-            user_message=turn.user_message.strip(),
-            assistant_message=turn.assistant_message.strip(),
-        )
-        for turn in payload.conversation_history
-    )
-    if any(not turn.user_message or not turn.assistant_message for turn in history):
-        raise HTTPException(
-            status_code=422,
-            detail="conversation messages must not be blank",
-        )
-    return history
-
-
-def _validate_active_ids(active_evidence_ids: list[str]) -> list[str]:
-    active_ids = [paper_id.strip() for paper_id in active_evidence_ids]
-    if any(not paper_id for paper_id in active_ids):
-        raise HTTPException(
-            status_code=422,
-            detail="active_evidence_ids must contain only non-empty strings",
-        )
-    if len(active_ids) > MAX_ACTIVE_EVIDENCE:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                "active_evidence_ids supports at most "
-                f"{MAX_ACTIVE_EVIDENCE} IDs"
-            ),
-        )
-    if len(set(active_ids)) != len(active_ids):
-        raise HTTPException(
-            status_code=422,
-            detail="active_evidence_ids must not contain duplicates",
-        )
-    return active_ids
+    return state
 
 
 def _load_active_evidence(
     database_path: Path,
-    active_ids: list[str],
+    active_ids: tuple[str, ...],
 ) -> tuple[SearchResult, ...]:
     papers = load_papers_by_arxiv_ids(database_path, active_ids)
-    found_ids = {paper["arxiv_id"] for paper in papers}
-    missing_ids = [paper_id for paper_id in active_ids if paper_id not in found_ids]
-    if missing_ids:
-        raise HTTPException(
-            status_code=422,
-            detail={"unknown_active_evidence_ids": missing_ids},
-        )
     return tuple(
         SearchResult(
             arxiv_id=paper["arxiv_id"],
@@ -273,6 +317,7 @@ def build_chat_response(
             if result.conversation_decision is not None
             else None
         ),
+        response_kind=result.response_kind,
         mode=mode,
         fallback_used=fallback_used,
     )
