@@ -1,9 +1,8 @@
-import ReactMarkdown from "react-markdown";
-
 import { ACTION_LABELS } from "../../constants";
 import type { CompletedTurn } from "../../types";
 import { PaperList } from "../results/PaperList";
 import { TracePanel } from "../trace/TracePanel";
+import { CitationMarkdown } from "./CitationMarkdown";
 import { UserBubble } from "./UserBubble";
 
 
@@ -54,12 +53,11 @@ export function ConversationTurn({
             <div className="completed-trace">
               <TracePanel
                 events={turn.result.trace}
-                title={`已完成 ${turn.result.trace.length} 个执行步骤`}
               />
             </div>
           ) : null}
           <div className="markdown-answer">
-            <ReactMarkdown>{turn.answer}</ReactMarkdown>
+            <CitationMarkdown content={turn.answer} papers={turn.papers} />
           </div>
           {turn.papers.length ? (
             <div className="result-details">

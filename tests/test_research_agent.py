@@ -3,6 +3,10 @@ import json
 import numpy as np
 
 from config.model_settings import ModelSettings
+from rag.answer_validation import (
+    SAFE_INSUFFICIENT_EVIDENCE_RESPONSE,
+    SAFE_UNVERIFIED_ANSWER_RESPONSE,
+)
 from rag.llm_client import AgentMessage, AgentToolCall, ModelUsage
 from rag.research_agent import MAX_TOOL_CALLS, run_research_agent
 from rag.search import SearchResult
@@ -85,8 +89,7 @@ def test_casual_message_finishes_without_tools(
 
     def fake_generate(*args: object, **kwargs: object) -> AgentMessage:
         observed_tools.append(kwargs["tools"])  # type: ignore[arg-type]
-        on_delta = kwargs["on_delta"]
-        on_delta("谢谢！")  # type: ignore[operator]
+        assert kwargs["on_delta"] is None
         return message(
             "谢谢！",
             usage=ModelUsage(10, 3, 13),
@@ -160,7 +163,11 @@ def test_agent_wraps_hybrid_retrieval_as_one_public_tool(
     assert result.answer == "基于论文的回答 [2501.09136]。"
     assert [item.arxiv_id for item in result.papers] == ["2501.09136"]
     assert result.retrieval_attempts == 1
-    assert {event.stage for event in result.trace} == {"model", "tool"}
+    assert {event.stage for event in result.trace} == {
+        "model",
+        "tool",
+        "answer_validation",
+    }
     tool_events = [event for event in result.trace if event.stage == "tool"]
     assert [event.status for event in tool_events] == ["started", "completed"]
     assert tool_events[-1].details["tool"] == "search_papers"
@@ -260,7 +267,7 @@ def test_model_cannot_execute_a_tool_removed_from_the_current_menu(
         if event.details.get("output", {}).get("error_type") == "tool_unavailable"
     ]
     assert len(unavailable) == 1
-    assert result.answer == "网页工具不可用，请补充具体上下文。"
+    assert result.answer == SAFE_INSUFFICIENT_EVIDENCE_RESPONSE
 
 
 def test_tool_execution_failure_is_returned_to_model(
@@ -295,7 +302,7 @@ def test_tool_execution_failure_is_returned_to_model(
     payload = json.loads(tool_message["content"])  # type: ignore[arg-type]
     assert payload["ok"] is False
     assert payload["error_type"] == "tool_execution"
-    assert result.answer == "论文工具暂时不可用，请稍后重试。"
+    assert result.answer == SAFE_INSUFFICIENT_EVIDENCE_RESPONSE
     assert result.generation_error is None
 
 
@@ -387,4 +394,107 @@ def test_five_tool_calls_are_followed_by_one_tool_free_final_call(
     assert all(menu == ["search_papers"] for menu in tool_menus[:-1])
     assert tool_menus[-1] == []
     assert result.retrieval_attempts == MAX_TOOL_CALLS
-    assert result.answer == "工具预算已用完，没有足够证据。"
+    assert result.answer == SAFE_INSUFFICIENT_EVIDENCE_RESPONSE
+
+
+def test_unknown_citation_is_not_streamed_or_returned(
+    monkeypatch: object,
+) -> None:
+    responses = [
+        message(calls=(tool_call("search_papers", {"query": "agent", "top_k": 1}),)),
+        message("虚构结论 [9999.99999]。"),
+    ]
+    monkeypatch.setattr(
+        "rag.research_agent.generate_agent_message",
+        lambda *args, **kwargs: responses.pop(0),
+    )
+    monkeypatch.setattr("rag.research_agent.hybrid_search", lambda *args, **kwargs: [paper()])
+    deltas: list[str] = []
+
+    result = run_research_agent(
+        "研究 Agent 有什么结论？",
+        top_k=5,
+        collection=object(),  # type: ignore[arg-type]
+        embedder=object(),  # type: ignore[arg-type]
+        reranker=FakeReranker(),
+        settings=SETTINGS,
+        on_assistant_delta=deltas.append,
+    )
+
+    assert result.answer == SAFE_UNVERIFIED_ANSWER_RESPONSE
+    assert result.papers == ()
+    assert deltas == [SAFE_UNVERIFIED_ANSWER_RESPONSE]
+    assert result.trace[-1].stage == "answer_validation"
+    assert result.trace[-1].status == "failed"
+
+
+def test_research_answer_without_citations_is_safely_rejected(
+    monkeypatch: object,
+) -> None:
+    responses = [
+        message(calls=(tool_call("search_papers", {"query": "agent", "top_k": 1}),)),
+        message("这是一段没有引用的技术结论。"),
+    ]
+    monkeypatch.setattr(
+        "rag.research_agent.generate_agent_message",
+        lambda *args, **kwargs: responses.pop(0),
+    )
+    monkeypatch.setattr("rag.research_agent.hybrid_search", lambda *args, **kwargs: [paper()])
+
+    result = run_research_agent(
+        "研究 Agent 有什么结论？",
+        top_k=5,
+        collection=object(),  # type: ignore[arg-type]
+        embedder=object(),  # type: ignore[arg-type]
+        reranker=FakeReranker(),
+        settings=SETTINGS,
+    )
+
+    assert result.answer == SAFE_UNVERIFIED_ANSWER_RESPONSE
+    assert result.papers == ()
+    assert result.trace[-1].details["reason"] == "missing_citation"
+
+
+def test_technical_answer_without_search_is_safely_rejected(
+    monkeypatch: object,
+) -> None:
+    monkeypatch.setattr(
+        "rag.research_agent.generate_agent_message",
+        lambda *args, **kwargs: message("这是一个未经检索的技术结论。"),
+    )
+
+    result = run_research_agent(
+        "MCP 是什么？",
+        top_k=5,
+        collection=object(),  # type: ignore[arg-type]
+        embedder=object(),  # type: ignore[arg-type]
+        reranker=FakeReranker(),
+        settings=SETTINGS,
+    )
+
+    assert result.answer == SAFE_INSUFFICIENT_EVIDENCE_RESPONSE
+    assert result.response_kind == "research"
+    assert result.trace[-1].details["reason"] == "no_evidence"
+
+
+def test_thanks_remains_conversational_when_active_evidence_exists(
+    monkeypatch: object,
+) -> None:
+    monkeypatch.setattr(
+        "rag.research_agent.generate_agent_message",
+        lambda *args, **kwargs: message("不客气。"),
+    )
+
+    result = run_research_agent(
+        "谢谢",
+        top_k=5,
+        collection=object(),  # type: ignore[arg-type]
+        embedder=object(),  # type: ignore[arg-type]
+        reranker=FakeReranker(),
+        settings=SETTINGS,
+        active_evidence=(paper(),),
+    )
+
+    assert result.answer == "不客气。"
+    assert result.response_kind == "conversation"
+    assert result.papers == ()

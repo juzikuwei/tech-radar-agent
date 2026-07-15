@@ -7,6 +7,12 @@ from typing import Any, Literal
 from chromadb.api.models.Collection import Collection
 
 from config.model_settings import ModelSettings
+from rag.answer_validation import (
+    SAFE_INSUFFICIENT_EVIDENCE_RESPONSE,
+    SAFE_UNVERIFIED_ANSWER_RESPONSE,
+    select_cited_papers,
+    validate_research_answer,
+)
 from rag.conversation import (
     ConversationDecision,
     ConversationDecisionError,
@@ -241,10 +247,16 @@ def run_rag(
         retrieval_attempts = 1
 
     if not results:
+        trace.record(
+            stage="answer_validation",
+            label="本地证据不足，执行安全拒答",
+            status="failed",
+            details={"reason": "no_evidence"},
+        )
         return RagResult(
             question=clean_question,
             papers=(),
-            answer=None,
+            answer=SAFE_INSUFFICIENT_EVIDENCE_RESPONSE,
             generation_error=None,
             retrieval_attempts=retrieval_attempts,
             standalone_question=standalone_question,
@@ -350,9 +362,41 @@ def run_rag(
         },
     )
 
+    validation = validate_research_answer(answer, results)
+    if not validation.is_valid:
+        trace.record(
+            stage="answer_validation",
+            label="最终回答引用校验失败，执行安全拒答",
+            status="failed",
+            details={
+                "reason": validation.reason,
+                "unknown_citation_ids": list(validation.unknown_citation_ids),
+            },
+        )
+        return RagResult(
+            question=clean_question,
+            papers=(),
+            answer=SAFE_UNVERIFIED_ANSWER_RESPONSE,
+            generation_error=None,
+            retrieval_attempts=retrieval_attempts,
+            standalone_question=standalone_question,
+            conversation_decision=conversation_decision,
+            conversation_decision_error=conversation_decision_error,
+            retrieval_decision=retrieval_decision,
+            retrieval_decision_error=retrieval_decision_error,
+            trace=trace.events,
+        )
+
+    cited_papers = select_cited_papers(validation, results)
+    trace.record(
+        stage="answer_validation",
+        label="最终回答引用校验通过",
+        details={"cited_arxiv_ids": list(validation.cited_ids)},
+    )
+
     return RagResult(
         question=clean_question,
-        papers=tuple(results),
+        papers=cited_papers,
         answer=answer,
         generation_error=None,
         retrieval_attempts=retrieval_attempts,

@@ -6,31 +6,39 @@ import { TracePanel } from "./TracePanel";
 
 
 describe("TracePanel", () => {
-  it("renders stage status timing and structured details", async () => {
+  it("merges lifecycle events and keeps raw details collapsed", async () => {
     const user = userEvent.setup();
     render(
       <TracePanel
         events={[
           {
-            stage: "retrieval_judgment",
-            label: "DeepSeek 检索充分性判断",
+            stage: "model",
+            label: "模型开始生成下一步",
+            status: "started",
+            duration_ms: 0,
+            details: { available_tools: ["search_papers"] },
+          },
+          {
+            stage: "model",
+            label: "模型完成本轮输出",
             status: "completed",
             duration_ms: 1250,
             details: {
-              sufficient: false,
-              rewritten_query: "agentic rag comparison",
+              tool_calls: ["search_papers"],
+              usage: { total_tokens: 120 },
             },
           },
         ]}
       />,
     );
 
-    await user.click(screen.getByText("Agent 执行过程"));
+    await user.click(screen.getByText("已完成 1 个执行步骤"));
 
-    expect(screen.getByText("DeepSeek 检索充分性判断")).toBeInTheDocument();
-    expect(screen.getByText("retrieval_judgment")).toBeInTheDocument();
+    expect(screen.getByText("模型选择论文检索")).toBeInTheDocument();
     expect(screen.getByText("1.25 s")).toBeInTheDocument();
-    expect(screen.getByText(/证据充分/)).toBeInTheDocument();
-    expect(screen.getByText(/agentic rag comparison/)).toBeInTheDocument();
+    await user.click(screen.getByText("查看技术详情"));
+    expect(screen.getByText("model · started")).toBeInTheDocument();
+    expect(screen.getByText("model · completed")).toBeInTheDocument();
+    expect(screen.getByText(/Token usage/)).toBeInTheDocument();
   });
 });

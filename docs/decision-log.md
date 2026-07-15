@@ -1718,3 +1718,189 @@ version history when operators need rollback or comparison across prompts.
 Introduce retrieval-based episodic memory only when conversations become too
 large for one rolling summary, and add API pagination when full-history reads
 become a measurable latency or payload problem.
+
+---
+
+## ADR-030: Enforce deterministic citation validation before displaying research answers
+
+- **Status:** Accepted
+- **Date:** 2026-07-15
+
+**Decision**
+
+Treat every model-generated research answer as untrusted text. Validate it at a
+shared application boundary used by both the fixed pipeline and the ReAct
+harness before the answer is returned or persisted. A research answer must cite
+at least one current evidence paper using the exact arXiv ID inside square
+brackets. Any arXiv-shaped ID anywhere in the answer that is not present in the
+current evidence set invalidates the complete answer. Paper cards, persisted
+paper IDs, and the next active evidence set contain only papers actually cited
+by a validated answer, in first-citation order.
+
+When retrieval returns no evidence, return a deterministic Chinese
+insufficient-evidence response without calling the answer model. When generated
+research text has no valid citation or contains an unknown ID, replace it with
+a deterministic citation-validation refusal, return no paper cards, and record
+an `answer_validation` failure in the request Trace. These safe refusals are
+normal completed turns rather than provider failures.
+
+The ReAct harness buffers model text until the final message is complete and
+validated. It emits only the validated answer or deterministic refusal to the
+SSE client. A conservative allowlist permits greetings, thanks, and short
+feedback to remain citation-free conversation responses; other no-evidence
+messages fail closed as research refusals.
+
+This decision partially supersedes ADR-009: citation identity and the
+zero-evidence refusal path are now programmatically validated. Semantic
+evidence sufficiency and claim-level entailment remain probabilistic. This does
+not introduce the LLM reflection described in the deferred stage 10 design.
+
+**Context**
+
+The application now renders clickable paper cards, persists citation IDs, and
+reuses the newest papers as active conversational evidence. Prompt instructions
+alone could not guarantee that inline IDs belonged to retrieved papers. The
+previous ReAct selector silently ignored unknown IDs and, when no valid citation
+was found, attached ranked candidate papers anyway. The fixed pipeline returned
+all candidates regardless of which papers the answer cited. A completely empty
+retrieval also returned `answer=None`, which the frontend presented as a
+generation failure instead of the product's promised insufficient-evidence
+refusal.
+
+Streaming made post-hoc validation especially unsafe because invalid text could
+already reach the browser before the final result was checked.
+
+**Alternatives considered**
+
+- Continue relying on prompts: preserves token streaming, but cannot enforce
+  citation identity or prevent invalid answers from entering history.
+- Silently remove unknown citations: keeps more model prose, but leaves claims
+  attached to the wrong or incomplete evidence and hides the model failure.
+- Require structured JSON output for every final answer: can express citations
+  explicitly, but reintroduces provider-format compatibility and repair logic
+  beyond the smallest safety boundary.
+- Add one reflection or regeneration model call after every answer: may repair
+  more failures, but increases latency and cost before deterministic validation
+  has produced real failure data.
+- Return every retrieved candidate as a paper card: preserves previous UI
+  behavior, but confuses retrieval candidates with citations and pollutes active
+  evidence.
+
+**Reason**
+
+Exact-ID validation is deterministic, offline-testable, provider-independent,
+and directly protects the API and persistence contracts. Failing closed with a
+stable refusal avoids another model call and makes invalid model output
+observable without exposing it to users. Sharing one validator prevents the
+fixed pipeline and ReAct mode from developing different citation semantics.
+
+**Consequences**
+
+- Zero-result questions produce a normal, persistable refusal rather than a
+  frontend generation-error state.
+- Unknown, version-invented, bare, or mixed valid/invalid arXiv IDs invalidate
+  the complete research answer.
+- Research answers without at least one valid bracketed citation are replaced
+  with a safe refusal.
+- Paper cards, stored paper IDs, and active evidence now mean "validated cited
+  papers", not "all final retrieval candidates".
+- ReAct final prose is delivered only after validation, then divided into small
+  SSE display chunks instead of exposing raw model-token deltas before the
+  safety boundary.
+- Direct conversational handling is intentionally conservative; uncommon
+  feedback wording may fail closed until a real example justifies widening the
+  allowlist.
+- The validator proves citation identity, not that every sentence is actually
+  entailed by the cited abstract. Claim-level groundedness and answer quality
+  still require evaluation or a future bounded reflection step.
+
+**Review or migration trigger**
+
+Add one controlled regeneration when real traces show frequent formatting-only
+validation failures with otherwise useful evidence. Replace the conservative
+direct-conversation allowlist with an explicit validated response-intent
+contract when legitimate feedback or rewriting requests are repeatedly
+rejected. Introduce claim-level reflection only after real answers demonstrate
+unsupported conclusions despite valid citation IDs.
+
+---
+
+## ADR-031: Link only verified citations and collapse Trace lifecycle noise in the UI
+
+- **Status:** Accepted
+- **Date:** 2026-07-15
+
+**Decision**
+
+Render an inline arXiv citation as a hyperlink only when its exact ID exists in
+the completed response's validated `papers` list and that paper provides an
+HTTP(S) `arxiv.org/abs/...` URL whose path resolves to the same versionless ID.
+Unknown IDs, unsafe URLs, citations inside code, and citations not present in
+the response evidence remain plain text. Completed and restored conversation
+turns use this shared renderer; the pending answer has no paper whitelist and
+therefore does not create citation links before the final response arrives.
+
+Keep every raw backend `TraceEvent`, but derive a presentation-only step list in
+React. Pair `model` started/completed events and `tool` started/completed events
+into one product-level step, use stable labels such as "模型选择论文检索",
+"检索本地论文" and "引用校验通过", and count these presented steps in the
+summary. The original labels, stages, statuses, parameters, usage, outputs and
+timings remain available inside a collapsed "查看技术详情" section. The live
+Trace shows the same concise steps plus the current status, without expanding
+debug payloads by default.
+
+**Context**
+
+Validated answers contain inline IDs such as `[2602.01129]`, while the paper
+cards below already link to arXiv. Leaving the inline ID as plain text makes it
+hard to move from a claim to its source. Linking every arXiv-shaped string would
+recreate a trust problem because model text is untrusted and URLs can be
+malformed or hostile.
+
+The ReAct Trace exposes useful lifecycle events, but one model decision and one
+tool call appear as separate start and completion rows. A normal one-search
+answer therefore displayed six low-level entries instead of three or four
+meaningful product steps. Removing raw events would improve readability but
+weaken debugging and learning value.
+
+**Alternatives considered**
+
+- Link every arXiv-shaped ID by constructing a URL: simple, but allows unverified
+  model text to look trusted and ignores the stored evidence contract.
+- Ask the backend to inject Markdown links: centralizes formatting, but couples
+  domain responses to one UI representation and requires escaping Markdown.
+- Link only paper-card titles: already safe, but leaves claim-level citations
+  inconvenient to inspect.
+- Delete model/tool start events from the backend Trace: reduces payload size,
+  but permanently loses lifecycle timing and retry context.
+- Show every raw Trace event by default: maximizes detail, but obscures the
+  Agent's actual decisions for normal users.
+
+**Reason**
+
+The completed response's paper list is already the validated citation
+whitelist established by ADR-030. Reusing it lets the frontend create useful
+links without trusting arbitrary model output. Presentation-only Trace merging
+improves readability without changing the HTTP schema, persistence format, or
+observability source data.
+
+**Consequences**
+
+- Clicking a verified inline citation opens the corresponding arXiv abstract in
+  a new tab.
+- Persisted turns regain the same links after reload because paper metadata is
+  reloaded from SQLite.
+- Pending text remains unlinkified until the final validated result is known.
+- Unsafe or mismatched paper URLs never become citation links.
+- Displayed Trace step counts may be smaller than raw event counts; technical
+  details expose the exact original sequence when needed.
+- Trace labels are a frontend presentation contract and can evolve without
+  changing backend stage names or stored data.
+
+**Review or migration trigger**
+
+Move citation rendering to an AST plugin if answers begin using tables or other
+Markdown containers not covered by the shared renderer. Add same-page citation
+anchors when users need to jump to paper cards instead of opening arXiv. Revisit
+Trace grouping when parallel tools, nested spans, or persisted cross-request
+traces make sequential lifecycle pairing insufficient.

@@ -6,7 +6,7 @@ from dataclasses import replace
 from pathlib import Path
 from queue import Queue
 from threading import Thread
-from time import perf_counter
+from time import perf_counter, sleep
 from collections.abc import Callable, Iterator
 from typing import Literal, TypeAlias
 
@@ -44,6 +44,8 @@ from rag.research_agent import ResearchAgentError, run_research_agent
 
 
 LOGGER = logging.getLogger(__name__)
+ANSWER_STREAM_CHUNK_CHARS = 32
+ANSWER_STREAM_INTERVAL_SECONDS = 0.02
 StreamItem: TypeAlias = (
     tuple[Literal["trace"], TraceEvent]
     | tuple[Literal["status"], str]
@@ -238,24 +240,12 @@ def stream_chat(
 ) -> Iterator[str]:
     """Yield SSE lifecycle events, text deltas, and one complete result."""
     items: Queue[StreamItem | None] = Queue()
-    emitted_delta = False
-    emitted_completed = False
 
     def emit_trace(event: TraceEvent) -> None:
         items.put(("trace", event))
 
     def emit_status(message: str) -> None:
         items.put(("status", message))
-
-    def emit_delta(delta: str) -> None:
-        nonlocal emitted_delta
-        emitted_delta = True
-        items.put(("assistant_delta", delta))
-
-    def emit_completed(content: str, usage: ModelUsage | None) -> None:
-        nonlocal emitted_completed
-        emitted_completed = True
-        items.put(("assistant_completed", (content, usage)))
 
     def produce() -> None:
         try:
@@ -265,13 +255,17 @@ def stream_chat(
                 runtime,
                 on_trace=emit_trace,
                 on_status=emit_status,
-                on_assistant_delta=emit_delta,
-                on_assistant_completed=emit_completed,
             )
-            if result.answer is not None and not emitted_completed:
-                if not emitted_delta:
-                    emit_delta(result.answer)
-                emit_completed(result.answer, result.usage)
+            if result.answer is not None:
+                for delta in _answer_chunks(result.answer):
+                    items.put(("assistant_delta", delta))
+                    sleep(ANSWER_STREAM_INTERVAL_SECONDS)
+                items.put(
+                    (
+                        "assistant_completed",
+                        (result.answer, result.usage),
+                    )
+                )
             items.put(("run_completed", result.usage))
             items.put(("result", result))
         except HTTPException as error:
@@ -362,6 +356,27 @@ def stream_chat(
 def _stream_event(event: str, payload: dict[str, object]) -> str:
     data = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
     return f"event: {event}\ndata: {data}\n\n"
+
+
+def _answer_chunks(
+    content: str,
+    *,
+    max_chars: int = ANSWER_STREAM_CHUNK_CHARS,
+) -> Iterator[str]:
+    """Split one validated answer into display-sized Unicode-safe chunks."""
+    if max_chars <= 0:
+        raise ValueError("max_chars must be greater than zero")
+    cursor = 0
+    preferred_boundaries = "\n。！？!?；;，, "
+    while cursor < len(content):
+        end = min(cursor + max_chars, len(content))
+        if end < len(content):
+            window = content[cursor:end]
+            boundary = max(window.rfind(character) for character in preferred_boundaries)
+            if boundary >= max_chars // 2:
+                end = cursor + boundary + 1
+        yield content[cursor:end]
+        cursor = end
 
 
 def _stream_error_message(detail: object) -> str:

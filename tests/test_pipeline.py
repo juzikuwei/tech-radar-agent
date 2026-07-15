@@ -3,6 +3,10 @@ from types import SimpleNamespace
 import numpy as np
 
 from config.model_settings import ModelSettings
+from rag.answer_validation import (
+    SAFE_INSUFFICIENT_EVIDENCE_RESPONSE,
+    SAFE_UNVERIFIED_ANSWER_RESPONSE,
+)
 from rag.application import answer_from_results, run_rag
 from rag.conversation import (
     ConversationDecision,
@@ -145,7 +149,7 @@ def test_insufficient_evidence_triggers_one_rewrite_and_original_rerank(
     )
     monkeypatch.setattr(
         "rag.application.answer_from_results",
-        lambda question, results, **kwargs: "grounded answer",
+        lambda question, results, **kwargs: "grounded answer [C] [B]",
     )
 
     result = run_rag(
@@ -160,11 +164,12 @@ def test_insufficient_evidence_triggers_one_rewrite_and_original_rerank(
     assert calls == ["original question", "rewritten query"]
     assert result.retrieval_attempts == 2
     assert [paper.arxiv_id for paper in result.papers] == ["C", "B"]
-    assert result.answer == "grounded answer"
+    assert result.answer == "grounded answer [C] [B]"
     assert [event.stage for event in result.trace] == [
         "retrieval_judgment",
         "final_union_rerank",
         "answer_generation",
+        "answer_validation",
     ]
 
 
@@ -187,7 +192,7 @@ def test_sufficient_evidence_skips_second_retrieval(monkeypatch: object) -> None
     )
     monkeypatch.setattr(
         "rag.application.answer_from_results",
-        lambda question, results, **kwargs: "grounded answer",
+        lambda question, results, **kwargs: "grounded answer [A]",
     )
 
     result = run_rag(
@@ -206,6 +211,7 @@ def test_sufficient_evidence_skips_second_retrieval(monkeypatch: object) -> None
     assert [event.stage for event in result.trace] == [
         "retrieval_judgment",
         "answer_generation",
+        "answer_validation",
     ]
 
 
@@ -223,7 +229,7 @@ def test_invalid_judge_output_falls_back_to_initial_results(
     monkeypatch.setattr("rag.application.judge_retrieval", fail_judgment)
     monkeypatch.setattr(
         "rag.application.answer_from_results",
-        lambda question, results, **kwargs: "fallback answer",
+        lambda question, results, **kwargs: "fallback answer [A]",
     )
 
     result = run_rag(
@@ -235,7 +241,7 @@ def test_invalid_judge_output_falls_back_to_initial_results(
         settings=ModelSettings("key", "https://example.test", "model"),
     )
 
-    assert result.answer == "fallback answer"
+    assert result.answer == "fallback answer [A]"
     assert result.retrieval_attempts == 1
     assert result.retrieval_decision_error == "invalid decision"
     assert result.trace[0].stage == "retrieval_judgment"
@@ -364,7 +370,7 @@ def test_followup_reuses_sufficient_evidence_without_retrieval(
     )
     monkeypatch.setattr(
         "rag.application.answer_from_results",
-        lambda question, results, **kwargs: "answer from old evidence",
+        lambda question, results, **kwargs: "answer from old evidence [OLD]",
     )
 
     result = run_rag(
@@ -384,6 +390,7 @@ def test_followup_reuses_sufficient_evidence_without_retrieval(
         "conversation_evidence_decision",
         "active_evidence_rerank",
         "answer_generation",
+        "answer_validation",
     ]
 
 
@@ -423,7 +430,7 @@ def test_followup_retrieves_only_missing_evidence_and_combines_it(
     )
     monkeypatch.setattr(
         "rag.application.answer_from_results",
-        lambda question, results, **kwargs: "combined answer",
+        lambda question, results, **kwargs: "combined answer [NEW] [OLD]",
     )
 
     result = run_rag(
@@ -474,7 +481,7 @@ def test_new_topic_discards_previous_evidence(monkeypatch: object) -> None:
     )
     monkeypatch.setattr(
         "rag.application.answer_from_results",
-        lambda question, results, **kwargs: "fresh answer",
+        lambda question, results, **kwargs: "fresh answer [FRESH]",
     )
 
     result = run_rag(
@@ -491,3 +498,46 @@ def test_new_topic_discards_previous_evidence(monkeypatch: object) -> None:
     assert [paper.arxiv_id for paper in result.papers] == ["FRESH"]
     assert result.conversation_decision is not None
     assert result.conversation_decision.next_action == "fresh_retrieval"
+
+
+def test_zero_results_return_a_deterministic_grounded_refusal() -> None:
+    class EmptyCollection:
+        def count(self) -> int:
+            return 0
+
+    result = run_rag(
+        "没有相关资料的问题",
+        top_k=5,
+        collection=EmptyCollection(),  # type: ignore[arg-type]
+        embedder=FakeEmbedder(),
+        settings=ModelSettings("key", "https://example.test", "model"),
+    )
+
+    assert result.answer == SAFE_INSUFFICIENT_EVIDENCE_RESPONSE
+    assert result.generation_error is None
+    assert result.papers == ()
+    assert result.trace[-1].stage == "answer_validation"
+    assert result.trace[-1].details["reason"] == "no_evidence"
+
+
+def test_unknown_citation_is_replaced_with_a_safe_refusal(
+    monkeypatch: object,
+) -> None:
+    monkeypatch.setattr(
+        "rag.application.answer_from_results",
+        lambda *args, **kwargs: "错误结论 [9999.99999]。",
+    )
+
+    result = run_rag(
+        "What is supported?",
+        top_k=1,
+        collection=FakeCollection(),
+        embedder=FakeEmbedder(),
+        settings=ModelSettings("key", "https://example.test", "model"),
+    )
+
+    assert result.answer == SAFE_UNVERIFIED_ANSWER_RESPONSE
+    assert result.papers == ()
+    assert result.generation_error is None
+    assert result.trace[-1].status == "failed"
+    assert result.trace[-1].details["unknown_citation_ids"] == ["9999.99999"]

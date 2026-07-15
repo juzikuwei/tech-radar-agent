@@ -6,6 +6,7 @@ import pytest
 
 import api.services.chat as chat_service
 from api.application import create_app
+from rag.answer_validation import SAFE_INSUFFICIENT_EVIDENCE_RESPONSE
 from config.conversation_context_settings import ConversationContextSettings
 from config.model_settings import ModelSettings
 from ingestion.repository import import_jsonl_snapshot
@@ -333,6 +334,57 @@ def test_chat_stream_emits_trace_then_persists_complete_result(
     assert response.headers["content-type"].startswith("text/event-stream")
 
 
+def test_chat_stream_chunks_only_the_completed_validated_answer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = make_runtime(make_database(tmp_path))
+    validated_answer = (
+        "这是已经通过引用校验的第一段回答。"
+        "这是第二段回答，用来确认 SSE 会分成多个事件。"
+    )
+    monkeypatch.setattr(chat_service, "sleep", lambda _: None)
+    validation_event = TraceEvent(
+        stage="answer_validation",
+        label="validated",
+        status="completed",
+        duration_ms=2.0,
+        details={"cited_arxiv_ids": ["2501.09136"]},
+    )
+
+    def fake_run_rag(question: str, **kwargs: object) -> RagResult:
+        on_trace = kwargs["on_trace"]
+        on_trace(validation_event)  # type: ignore[operator]
+        return RagResult(
+            question=question,
+            papers=(),
+            answer=validated_answer,
+            generation_error=None,
+            trace=(validation_event,),
+        )
+
+    monkeypatch.setattr(chat_service, "run_rag", fake_run_rag)
+    app = create_app(lambda: runtime)
+
+    with TestClient(app) as client:
+        conversation_id = create_client_conversation(client)
+        response = client.post(
+            f"/conversations/{conversation_id}/chat/stream",
+            json={"question": "stream validated answer"},
+        )
+
+    events = parse_sse_events(response.text)
+    deltas = [event["delta"] for event in events if event["type"] == "assistant_delta"]
+    completed = [event for event in events if event["type"] == "assistant_completed"]
+    event_types = [event["type"] for event in events]
+    assert len(deltas) > 1
+    assert "".join(deltas) == validated_answer
+    assert len(completed) == 1
+    assert completed[0]["message"]["content"] == validated_answer  # type: ignore[index]
+    assert event_types.index("trace") < event_types.index("assistant_delta")
+    assert event_types[-2:] == ["run_completed", "result"]
+
+
 def test_react_mode_uses_research_agent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     runtime = make_runtime(make_database(tmp_path))
     monkeypatch.setattr(
@@ -565,6 +617,41 @@ def test_generation_failure_does_not_enter_history(
     assert response.status_code == 200
     assert response.json()["answer"] is None
     assert stored.json()["turn_count"] == 0
+
+
+def test_grounded_refusal_enters_history_as_a_completed_turn(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = make_runtime(make_database(tmp_path))
+    monkeypatch.setattr(
+        chat_service,
+        "run_rag",
+        lambda question, **kwargs: RagResult(
+            question=question,
+            papers=(),
+            answer=SAFE_INSUFFICIENT_EVIDENCE_RESPONSE,
+            generation_error=None,
+            trace=(),
+            response_kind="research",
+        ),
+    )
+    app = create_app(lambda: runtime)
+
+    with TestClient(app) as client:
+        conversation_id = create_client_conversation(client)
+        response = client.post(
+            f"/conversations/{conversation_id}/chat",
+            json={"question": "本地没有资料的问题"},
+        )
+        stored = client.get(f"/conversations/{conversation_id}")
+
+    assert response.json()["answer"] == SAFE_INSUFFICIENT_EVIDENCE_RESPONSE
+    assert stored.json()["turn_count"] == 1
+    assert stored.json()["turns"][0]["assistant_message"] == (
+        SAFE_INSUFFICIENT_EVIDENCE_RESPONSE
+    )
+    assert stored.json()["turns"][0]["paper_ids"] == []
 
 
 def test_direct_response_is_stored_without_clearing_active_evidence(

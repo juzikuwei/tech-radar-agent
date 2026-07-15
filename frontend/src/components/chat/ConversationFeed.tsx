@@ -1,6 +1,4 @@
 import type { RefObject } from "react";
-import ReactMarkdown from "react-markdown";
-
 import type {
   ChatResponse,
   CompletedTurn,
@@ -10,6 +8,7 @@ import type {
 import { ResultDetails } from "../results/ResultDetails";
 import { LiveTracePanel } from "../trace/LiveTracePanel";
 import { ConversationTurn } from "./ConversationTurn";
+import { CitationMarkdown } from "./CitationMarkdown";
 import { EmptyState } from "./EmptyState";
 import { UserBubble } from "./UserBubble";
 
@@ -101,7 +100,7 @@ function PendingAnswer({
           <LiveTracePanel events={trace} status={status} />
           {answer ? (
             <div className="markdown-answer live-answer">
-              <ReactMarkdown>{answer}</ReactMarkdown>
+              <CitationMarkdown content={answer} papers={[]} />
             </div>
           ) : null}
           {usage ? (

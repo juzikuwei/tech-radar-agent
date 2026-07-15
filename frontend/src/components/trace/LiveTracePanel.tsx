@@ -1,6 +1,6 @@
 import { formatDuration } from "../../formatters";
 import type { TraceEvent } from "../../types";
-import { TraceEventDetails } from "./TraceEventDetails";
+import { presentTraceEvents } from "./tracePresentation";
 
 
 export function LiveTracePanel({
@@ -10,6 +10,7 @@ export function LiveTracePanel({
   events: TraceEvent[];
   status: string;
 }) {
+  const steps = presentTraceEvents(events);
   return (
     <div className="live-trace" aria-label="Agent 正在执行">
       <div className="live-trace-header">
@@ -17,22 +18,19 @@ export function LiveTracePanel({
         <strong>{status}</strong>
       </div>
       <div className="live-trace-list">
-        {events.map((event, index) => (
-          <div className="live-trace-event" key={`${event.stage}-${index}`}>
-            <div className={`live-trace-item ${event.status}`}>
+        {steps.map((step) => (
+          <div className="live-trace-event" key={step.key}>
+            <div className={`live-trace-item ${step.status}`}>
               <span className="live-trace-check" aria-hidden="true">
-                {event.status === "failed"
+                {step.status === "failed"
                   ? "!"
-                  : event.status === "started" || event.status === "retrying"
+                  : step.status === "started" || step.status === "retrying"
                     ? "·"
                     : "✓"}
               </span>
-              <span>{event.label}</span>
-              <time>{formatDuration(event.duration_ms)}</time>
+              <span>{step.label}</span>
+              <time>{formatDuration(step.duration_ms)}</time>
             </div>
-            {event.stage.startsWith("agent_") ? (
-              <TraceEventDetails details={event.details} compact />
-            ) : null}
           </div>
         ))}
         <div className="live-trace-item active">

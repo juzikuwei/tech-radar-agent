@@ -237,7 +237,7 @@ describe("App", () => {
     await user.type(screen.getByLabelText(INPUT_LABEL), "显示执行过程");
     await user.click(screen.getByRole("button", { name: "发送" }));
 
-    expect(await screen.findByText("DeepSeek 最终回答生成")).toBeInTheDocument();
+    expect(await screen.findByText("生成最终回答")).toBeInTheDocument();
     expect(screen.getAllByText("模型正在生成回答…")).toHaveLength(2);
     expect(screen.getByText("实时生成的回答")).toBeInTheDocument();
     expect(screen.getByText("本条消息 25 tokens")).toBeInTheDocument();

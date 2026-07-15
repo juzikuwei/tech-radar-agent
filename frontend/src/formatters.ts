@@ -48,6 +48,9 @@ export function detailLabel(key: string): string {
     top_arxiv_ids: "Top IDs",
     reusable_arxiv_ids: "复用 IDs",
     error: "错误",
+    cited_arxiv_ids: "已验证引用",
+    unknown_citation_ids: "未知引用",
+    answer_char_count: "回答字符数",
   };
   return labels[key] ?? key.replaceAll("_", " ");
 }

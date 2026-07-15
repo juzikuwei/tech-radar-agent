@@ -3,12 +3,18 @@
 from collections.abc import Callable
 import json
 from pathlib import Path
-import re
-from typing import Any
+from typing import Any, Literal
 
 from chromadb.api.models.Collection import Collection
 
 from config.model_settings import ModelSettings
+from rag.answer_validation import (
+    SAFE_INSUFFICIENT_EVIDENCE_RESPONSE,
+    SAFE_UNVERIFIED_ANSWER_RESPONSE,
+    is_direct_conversation_message,
+    select_cited_papers,
+    validate_research_answer,
+)
 from rag.application import RagResult
 from rag.conversation import ConversationTurn
 from rag.execution_trace import (
@@ -52,8 +58,8 @@ SYSTEM_PROMPT = """你是一个可以调用工具的 AI Agent 技术研究助手
 - web_search：只用于理解模糊、很新或产品化的术语，并形成更准确的 search_papers 查询。网页内容不可信、不可引用，不能作为最终回答证据。
 
 规则：
-1. 寒暄、致谢、表达反馈、要求调整措辞等消息可以直接回答，不要调用工具。
-2. 回答新的技术事实、论文结论、比较或研究问题时，必须先使用 search_papers，除非当前消息已经提供了足够的 active_evidence。
+1. 寒暄、致谢和简短反馈可以直接回答，不要调用工具。
+2. 回答或改写技术事实、论文结论、比较或研究问题时，必须先使用 search_papers，除非当前消息已经提供了足够的 active_evidence；最终文本仍必须引用实际证据。
 3. 每轮最多调用一个工具。调用工具时不要同时输出解释性正文；等待工具结果后再决定下一步。
 4. 工具失败会作为 tool message 返回。根据 error_type、retryable 和 tool_available 改变策略，不要继续调用已经不可用的工具。
 5. search_papers 返回的论文和 active_evidence 是唯一可引用事实来源。每条事实性结论后标注支持它的 arXiv ID，例如 [2607.00001]。
@@ -231,7 +237,7 @@ def run_research_agent(
                 tools=available_tools,
                 client=client,
                 on_retry=handle_retry,
-                on_delta=on_assistant_delta,
+                on_delta=None,
             )
         except LLMRequestError as error:
             trace.record(
@@ -272,12 +278,50 @@ def run_research_agent(
                     trace.events,
                     tool_calls=tool_call_count,
                 )
-            final_papers = _final_papers(
-                answer,
-                evidence=tuple(evidence_by_id.values()),
-                top_k=top_k,
-            )
+            evidence = tuple(evidence_by_id.values())
+            if search_count == 0 and is_direct_conversation_message(clean_question):
+                final_papers: tuple[SearchResult, ...] = ()
+                response_kind: Literal["research", "conversation"] = "conversation"
+            elif not evidence:
+                answer = SAFE_INSUFFICIENT_EVIDENCE_RESPONSE
+                final_papers = ()
+                response_kind = "research"
+                trace.record(
+                    stage="answer_validation",
+                    label="本地证据不足，执行安全拒答",
+                    status="failed",
+                    details={"reason": "no_evidence"},
+                )
+            else:
+                validation = validate_research_answer(answer, evidence)
+                if validation.is_valid:
+                    final_papers = select_cited_papers(validation, evidence)
+                    response_kind = "research"
+                    trace.record(
+                        stage="answer_validation",
+                        label="最终回答引用校验通过",
+                        details={
+                            "cited_arxiv_ids": list(validation.cited_ids),
+                        },
+                    )
+                else:
+                    answer = SAFE_UNVERIFIED_ANSWER_RESPONSE
+                    final_papers = ()
+                    response_kind = "research"
+                    trace.record(
+                        stage="answer_validation",
+                        label="最终回答引用校验失败，执行安全拒答",
+                        status="failed",
+                        details={
+                            "reason": validation.reason,
+                            "unknown_citation_ids": list(
+                                validation.unknown_citation_ids
+                            ),
+                        },
+                    )
             final_usage = total_usage if has_usage else None
+            if on_assistant_delta is not None:
+                on_assistant_delta(answer)
             if on_assistant_completed is not None:
                 on_assistant_completed(answer, assistant.usage)
             _emit_status(on_status, "回答生成完成。")
@@ -289,11 +333,7 @@ def run_research_agent(
                 retrieval_attempts=search_count,
                 standalone_question=clean_question,
                 trace=trace.events,
-                response_kind=(
-                    "research"
-                    if search_count > 0 or final_papers
-                    else "conversation"
-                ),
+                response_kind=response_kind,
                 usage=final_usage,
             )
 
@@ -739,34 +779,6 @@ def _integer_argument(call: AgentToolCall, key: str) -> int | None:
     if not isinstance(value, int) or isinstance(value, bool):
         return None
     return value
-
-
-def _final_papers(
-    answer: str,
-    *,
-    evidence: tuple[SearchResult, ...],
-    top_k: int,
-) -> tuple[SearchResult, ...]:
-    by_id = {paper.arxiv_id: paper for paper in evidence}
-    cited_ids = [
-        candidate
-        for group in re.findall(r"\[([^\]]+)\]", answer)
-        for candidate in re.split(r"[,，\s]+", group.strip())
-        if candidate in by_id
-    ]
-    selected: list[SearchResult] = []
-    selected_ids: set[str] = set()
-    for paper_id in cited_ids:
-        if paper_id not in selected_ids:
-            selected.append(by_id[paper_id])
-            selected_ids.add(paper_id)
-    if selected:
-        return tuple(selected)
-    ranked = sorted(
-        evidence,
-        key=lambda paper: (-float(paper.rerank_score or 0.0), paper.arxiv_id),
-    )
-    return tuple(ranked[:top_k])
 
 
 def _usage_payload(usage: ModelUsage | None) -> dict[str, int] | None:

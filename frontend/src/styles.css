@@ -266,6 +266,7 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .markdown-answer code { padding: 2px 5px; background: #f1f2f4; border-radius: 4px; }
 .markdown-answer li { margin-bottom: 6px; }
 .markdown-answer a { color: var(--accent-dark); text-underline-offset: 3px; }
+.markdown-answer .citation-link { padding: 1px 3px; background: #f0f3ff; border-radius: 4px; font-weight: 650; text-decoration-thickness: 1px; }
 
 .result-details { margin-top: 23px; display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; }
 .detail-section {
@@ -296,12 +297,17 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .trace-item.failed .trace-index { background: var(--danger); }
 .trace-item.skipped .trace-index { background: #a5a9b1; }
 .trace-heading { display: flex; justify-content: space-between; gap: 20px; color: #555b65; font-size: 11px; }
-.trace-heading span, .trace-body > p { color: #9b9fa8; font-size: 9px; }
-.trace-body > p { margin: 4px 0 7px; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+.trace-heading span { color: #9b9fa8; font-size: 9px; }
 .trace-details { display: flex; flex-wrap: wrap; gap: 5px; }
 .trace-details span { padding: 4px 6px; background: #f3f4f6; color: #858b95; border-radius: 4px; font-size: 9px; }
 .trace-details b { color: #5d626c; }
 .trace-event-details { margin-top: 7px; }
+.trace-technical-details { margin-top: 7px; color: #9297a1; font-size: 9px; }
+.trace-technical-details > summary { cursor: pointer; user-select: none; }
+.trace-raw-event { margin-top: 8px; padding: 8px; background: #f8f9fb; border: 1px solid #eceef3; border-radius: 5px; }
+.trace-raw-event code, .trace-raw-event > strong { display: block; }
+.trace-raw-event code { color: #959aa4; font-size: 8px; }
+.trace-raw-event > strong { margin-top: 4px; color: #656b75; font-size: 9px; }
 .trace-reason { margin: 0 0 8px !important; color: #687080 !important; font-family: inherit !important; font-size: 10px !important; line-height: 1.6; }
 .research-plan-list { margin: 7px 0 9px; padding: 9px 10px; display: grid; gap: 7px; color: #626977; background: #f7f8fc; border-radius: 7px; list-style: none; }
 .research-plan-list li { display: grid; grid-template-columns: 15px 1fr; gap: 6px; font-size: 10px; line-height: 1.5; }
