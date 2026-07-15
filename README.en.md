@@ -16,7 +16,9 @@ This repository is also an incremental agent-engineering practice project. The f
 - Support a bounded tool-calling ReAct loop: each round the model directly chooses local paper retrieval, optional web search, or emitting the final text, calling tools at most 5 times.
 - Tavily web search is used only to clarify new terms and form more accurate paper queries; web content never becomes answer evidence and is not citable.
 - A Tavily authentication failure disables the web tool for the current request; the error is fed back as a tool observation, letting the model choose another tool, clarify, or finish. Transient network or service errors get at most one retry.
-- The React chat UI uses SSE to stream answer text, model usage, tool lifecycle, paper citations, persistent multi-conversation state, and agent-fallback status in real time. SQLite retains every original turn, while the working context batch-compacts the oldest turns after an estimated token threshold instead of using a fixed six-turn window.
+- Every final research answer passes deterministic citation validation before it is returned or persisted: it must cite papers from the current evidence set, while unknown arXiv IDs, invented versions, citation-free research answers, and zero-result retrievals fail closed with an explicit refusal.
+- After validation, the React chat UI displays the answer in SSE chunks; verified inline arXiv IDs open the corresponding paper page. Trace merges model/tool start and completion events by default while keeping raw parameters, usage, and tool output in collapsed technical details.
+- SQLite retains every original turn, while the working context batch-compacts the oldest turns after an estimated token threshold instead of using a fixed six-turn window.
 - Provides a FastAPI HTTP API and a read-only Streamable HTTP MCP server protected by a Bearer token.
 - All critical network boundaries are replaceable or mockable; tests run offline by default.
 
@@ -75,9 +77,9 @@ The model currently sees two tools:
 2. **Build the tool menu dynamically.** An unavailable Tavily client or non-retryable authentication failure removes `web_search` from subsequent turns.
 3. **Bound the loop deterministically.** A request may execute at most five tools, including at most two web searches. Once the budget is exhausted, one final model call receives no tools and must answer, clarify, or refuse from existing evidence.
 4. **Return failures as observations.** Timeouts, rate limits, authentication failures, and invalid arguments become tool messages containing `error_type`, `retryable`, and `tool_available`.
-5. **Enforce evidence in code.** Cited arXiv IDs can only resolve to papers actually returned by the current tools or active evidence. Web snippets, model memory, previous assistant text, and compacted context are not paper evidence.
+5. **Enforce evidence in code.** A final research answer must contain at least one bracketed citation from the current evidence set, and any unknown arXiv ID anywhere in the answer invalidates the complete response. Paper cards, persisted IDs, active evidence, and inline hyperlinks use only validated cited papers. Web snippets, model memory, previous assistant text, and compacted context are not paper evidence.
 6. **Keep a reliable outer boundary.** If the model or harness fails irrecoverably, the request falls back to the fixed agentic RAG pipeline and records the fallback in Trace.
-7. **Observe meaningful boundaries.** ReAct Trace exposes model calls, tool lifecycle, errors, usage, and final output; dense retrieval, BM25, and rank fusion remain internal to one logical paper-search tool.
+7. **Observe meaningful boundaries.** ReAct Trace preserves model calls, tool lifecycle, errors, usage, and final output, while React merges start/completion pairs into product-level steps by default. The complete raw events remain expandable as technical details; dense retrieval, BM25, and rank fusion stay internal to one logical paper-search tool.
 
 ## Conversation context: immutable history and derived working memory
 
@@ -117,14 +119,17 @@ flowchart LR
         O --> L
         L -->|web_search| W[Tavily term clarification]
         W --> O
-        L -->|No tool call| G[Cited Chinese answer]
+        L -->|No tool call| G[Candidate Chinese answer]
         P -->|Reliable pipeline| J[Retrieval judgment and at most one retry]
         J --> G
+        G --> V{Deterministic citation validation}
+        V -->|Pass| UI[React + post-validation SSE chunks]
+        V -->|Fail or no evidence| X[Safe refusal]
+        X --> UI
     end
 
     D --> H
     F --> H
-    G --> UI[React + SSE Live Trace]
     D --> MCP[Read-only MCP tools]
     F --> MCP
 ```
@@ -230,7 +235,7 @@ API docs are available at `http://127.0.0.1:8000/docs`.
 | `GET` | `/conversations/{id}` | Return full text and paper-citation history |
 | `DELETE` | `/conversations/{id}` | Delete a conversation and its turns |
 | `POST` | `/conversations/{id}/chat` | Return the complete answer and persist it |
-| `POST` | `/conversations/{id}/chat/stream` | Stream status, tool events, text deltas, usage, and the final result over SSE |
+| `POST` | `/conversations/{id}/chat/stream` | Stream status, tool events, post-validation text chunks, usage, and the final result over SSE |
 
 The conversation-scoped chat endpoints support two modes, `pipeline` and `react`; a request contains only the question, `top_k`, and the mode. ReAct tool errors are first returned to the model as observations; only when the model or harness hits an unrecoverable error does it fall back to the reliable fixed pipeline and mark `fallback_used` in the response.
 
@@ -265,17 +270,17 @@ npm test
 npm run build
 ```
 
-Tests cover data normalization, idempotent import, retrieval, citations, refusal, token-triggered compaction, preservation of raw history, the tool-calling harness, streaming usage, web-search failures, and the HTTP/MCP boundaries.
+Tests cover data normalization, idempotent import, retrieval, deterministic citation validation, zero-evidence refusal, token-triggered compaction, preservation of raw history, the tool-calling harness, post-validation SSE ordering, trusted citation links, Trace presentation merging, web-search failures, and the HTTP/MCP boundaries.
 
 ## Project Structure
 
 ```text
 api/            FastAPI routes, request contracts, and runtime lifecycle
 config/         Query, model, MCP, and web-search configuration boundaries
-frontend/       React chat UI, citation cards, and the live trace
+frontend/       React chat UI, trusted citation links, citation cards, and concise trace views
 ingestion/      arXiv fetching, normalization, snapshots, and SQLite import
 mcp_server/     Read-only Streamable HTTP MCP adapter
-rag/            Retrieval, reranking, fixed pipeline, ReAct agent, and answer generation
+rag/            Retrieval, reranking, fixed pipeline, ReAct agent, answer generation, and citation validation
 tests/          Python tests that run offline by default
 docs/           ADR decision log and MCP usage notes
 first.md        Full scope, learning roadmap, and phase-acceptance record
@@ -292,6 +297,7 @@ The FastAPI, MCP, and command-line entry points reuse the domain capabilities in
 - The MCP shared token suits local development and controlled invitations; before public exposure it needs OAuth 2.1, per-user rate limiting, and an HTTPS reverse proxy.
 - Context compaction uses a conservative provider-independent token estimate rather than the model's official tokenizer, so thresholds still need calibration from real usage.
 - The rolling summary carries goals, constraints, decisions, and open questions only; it is never paper evidence, while original user messages, assistant responses, and paper records remain in trusted storage.
+- Deterministic validation guarantees that citation IDs belong to the current evidence set, but it does not prove that every sentence is fully entailed by the cited abstracts; finer-grained claim-level groundedness still requires later evaluation or bounded reflection.
 - Cross-conversation long-term memory, LangGraph, human-in-the-loop, and multi-agent orchestration are not yet introduced.
 
 The next stage is to calibrate compaction thresholds with real long conversations and verify that early user constraints survive repeated batch compactions. See [first.md](first.md) for the full milestones and [docs/decision-log.md](docs/decision-log.md) for key architectural trade-offs.
