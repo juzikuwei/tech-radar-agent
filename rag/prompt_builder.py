@@ -3,7 +3,7 @@
 import json
 from collections.abc import Sequence
 
-from rag.conversation import ConversationTurn, bounded_history
+from rag.conversation import ConversationTurn
 from rag.search import SearchResult
 
 
@@ -21,6 +21,7 @@ SYSTEM_PROMPT = """你是一个基于 arXiv 论文摘要回答问题的研究助
 9. 之前的对话只用于理解用户意图，不得把助手之前的回答当作事实证据；事实仍必须来自本轮 <retrieved_papers>。
 10. 比较问题可以综合分别描述两个对象的不同论文。分别引用每一侧的证据，并明确使用“综合这些摘要可以归纳”等措辞；没有直接对比研究时，不得声称某篇论文做过正面对比。
 11. 历史助手消息后的 <historical_evidence_ids> 只说明那些 ID 属于对应历史轮次，不代表它们是本轮事实证据，也不得据此判断历史回答正确或错误。
+12. <conversation_summary> 是较早对话的有损工作记忆，只能用于理解用户目标、约束和未解决问题，不得作为技术事实或论文证据。
 """
 
 
@@ -29,6 +30,7 @@ def build_rag_messages(
     papers: Sequence[SearchResult],
     *,
     conversation_history: Sequence[ConversationTurn] = (),
+    context_summary: str | None = None,
     standalone_question: str | None = None,
 ) -> list[dict[str, str]]:
     """Return model messages containing the question and bounded evidence."""
@@ -47,8 +49,16 @@ def build_rag_messages(
     clean_standalone_question = (
         standalone_question.strip() if standalone_question else clean_question
     )
+    summary_content = (
+        "<conversation_summary>\n"
+        f"{context_summary}\n"
+        "</conversation_summary>\n\n"
+        if context_summary
+        else ""
+    )
     user_content = (
-        f"<current_question>\n{clean_question}\n</current_question>\n\n"
+        summary_content
+        + f"<current_question>\n{clean_question}\n</current_question>\n\n"
         "<standalone_question>\n"
         f"{clean_standalone_question}\n"
         "</standalone_question>\n\n"
@@ -57,7 +67,7 @@ def build_rag_messages(
         "</retrieved_papers>"
     )
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-    for turn in bounded_history(conversation_history):
+    for turn in conversation_history:
         assistant_content = turn.assistant_message
         if turn.evidence_ids:
             assistant_content += (

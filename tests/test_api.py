@@ -6,11 +6,12 @@ import pytest
 
 import api.services.chat as chat_service
 from api.application import create_app
+from config.conversation_context_settings import ConversationContextSettings
 from config.model_settings import ModelSettings
 from ingestion.repository import import_jsonl_snapshot
 from ingestion.snapshot import write_jsonl_snapshot
 from rag.application import RagResult
-from rag.conversation import ConversationDecision, MAX_STORED_TURNS
+from rag.conversation import ConversationDecision
 from rag.conversation_store import (
     append_conversation_turn,
     create_conversation,
@@ -70,13 +71,20 @@ def make_database(tmp_path: Path) -> Path:
     return database_path
 
 
-def make_runtime(database_path: Path) -> RagRuntime:
+def make_runtime(
+    database_path: Path,
+    *,
+    context_settings: ConversationContextSettings | None = None,
+) -> RagRuntime:
     return RagRuntime(
         collection=FakeCollection(),  # type: ignore[arg-type]
         embedder=object(),  # type: ignore[arg-type]
         reranker=object(),  # type: ignore[arg-type]
         settings=ModelSettings("key", "https://example.test", "model"),
         database_path=database_path,
+        conversation_context_settings=(
+            context_settings or ConversationContextSettings()
+        ),
     )
 
 
@@ -202,8 +210,8 @@ def test_chat_loads_recent_state_and_persists_response(
     assert body["trace"][0]["stage"] == "answer_generation"
     assert observed["question"] == "follow-up question"
     history = observed["history"]
-    assert len(history) == 6  # type: ignore[arg-type]
-    assert history[0].user_message == "question 1"  # type: ignore[index,union-attr]
+    assert len(history) == 7  # type: ignore[arg-type]
+    assert history[0].user_message == "question 0"  # type: ignore[index,union-attr]
     evidence = observed["active_evidence"]
     assert evidence[0].document == "Agent systems\nNormalized abstract"  # type: ignore[index,union-attr]
     stored_body = stored.json()
@@ -211,6 +219,66 @@ def test_chat_loads_recent_state_and_persists_response(
     assert stored_body["turns"][-1]["assistant_message"] == "grounded answer"
     assert stored_body["turns"][-1]["paper_ids"] == ["2607.00001"]
     assert stored_body["turns"][-1]["papers"][0]["rerank_score"] is None
+
+
+def test_chat_compacts_context_before_running_rag(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = make_database(tmp_path)
+    runtime = make_runtime(
+        database_path,
+        context_settings=ConversationContextSettings(
+            token_threshold=120,
+            target_tokens=70,
+        ),
+    )
+    conversation = create_conversation(database_path)
+    for index in range(4):
+        append_conversation_turn(
+            database_path,
+            conversation.conversation_id,
+            user_message=f"original user {index} " + "目标" * 30,
+            assistant_message=f"original assistant {index} " + "回答" * 30,
+        )
+    summary = json.dumps(
+        {
+            "user_goals": ["长期目标"],
+            "confirmed_requirements": [],
+            "decisions": [],
+            "important_context": [],
+            "open_questions": [],
+        },
+        ensure_ascii=False,
+    )
+    monkeypatch.setattr(
+        "rag.context_compaction.generate_text",
+        lambda *args, **kwargs: summary,
+    )
+    observed: dict[str, object] = {}
+
+    def fake_run_rag(question: str, **kwargs: object) -> RagResult:
+        observed.update(kwargs)
+        return RagResult(
+            question=question,
+            papers=(),
+            answer="answer",
+            generation_error=None,
+        )
+
+    monkeypatch.setattr(chat_service, "run_rag", fake_run_rag)
+    app = create_app(lambda: runtime)
+
+    with TestClient(app) as client:
+        response = client.post(
+            f"/conversations/{conversation.conversation_id}/chat",
+            json={"question": "continue"},
+        )
+
+    assert response.status_code == 200
+    assert observed["context_summary"] is not None
+    assert len(observed["conversation_history"]) < 4  # type: ignore[arg-type]
+    assert response.json()["trace"][0]["stage"] == "conversation_compaction"
 
 
 def test_chat_stream_emits_trace_then_persists_complete_result(
@@ -418,14 +486,14 @@ def test_old_chat_contract_is_removed_and_client_state_is_forbidden(
     assert error_fields == {"conversation_history", "active_evidence_ids"}
 
 
-def test_chat_rejects_missing_or_full_conversation_before_model_call(
+def test_chat_rejects_missing_but_allows_long_conversation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     database_path = make_database(tmp_path)
     runtime = make_runtime(database_path)
     conversation = create_conversation(database_path)
-    for index in range(MAX_STORED_TURNS):
+    for index in range(105):
         append_conversation_turn(
             database_path,
             conversation.conversation_id,
@@ -435,7 +503,12 @@ def test_chat_rejects_missing_or_full_conversation_before_model_call(
     monkeypatch.setattr(
         chat_service,
         "run_rag",
-        lambda *args, **kwargs: pytest.fail("full conversation must not call RAG"),
+        lambda question, **kwargs: RagResult(
+            question=question,
+            papers=(),
+            answer="answer",
+            generation_error=None,
+        ),
     )
     app = create_app(lambda: runtime)
 
@@ -444,7 +517,7 @@ def test_chat_rejects_missing_or_full_conversation_before_model_call(
             "/conversations/missing/chat",
             json={"question": "question"},
         )
-        full = client.post(
+        long_chat = client.post(
             f"/conversations/{conversation.conversation_id}/chat",
             json={"question": "one too many"},
         )
@@ -452,17 +525,15 @@ def test_chat_rejects_missing_or_full_conversation_before_model_call(
             "/conversations/missing/chat/stream",
             json={"question": "question"},
         )
-        full_stream = client.post(
+        long_stream = client.post(
             f"/conversations/{conversation.conversation_id}/chat/stream",
             json={"question": "one too many"},
         )
 
     assert missing.status_code == 404
-    assert full.status_code == 422
-    assert "100" in full.json()["detail"]
+    assert long_chat.status_code == 200
     assert missing_stream.status_code == 404
-    assert full_stream.status_code == 422
-    assert "100" in full_stream.json()["detail"]
+    assert long_stream.status_code == 200
 
 
 def test_generation_failure_does_not_enter_history(

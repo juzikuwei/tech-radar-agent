@@ -1611,3 +1611,110 @@ tool set contains independent operations that benefit from concurrency.
 Persist usage and Trace when cross-request cost analysis becomes a product
 requirement. Revisit the five-call budget using observed latency and token
 distributions rather than increasing it preemptively.
+
+---
+
+## ADR-029: Replace fixed conversation windows with token-triggered batch compaction
+
+- **Status:** Accepted
+- **Date:** 2026-07-15
+
+**Decision**
+
+Remove both the fixed six-turn model window and the 100-turn conversation
+storage cap. Persist every original user message, assistant response, and
+paper-ID association in `conversation_turns` without rewriting or deleting old
+rows. Add a structured rolling summary and a `compacted_through_turn_id` to the
+conversation row. The summary is derived working memory and can always be
+rebuilt from the immutable turn log.
+
+Estimate the token size of the summary plus every uncompacted complete turn.
+When it exceeds `CONVERSATION_CONTEXT_TOKEN_THRESHOLD`, batch the oldest
+complete turns until the remaining raw context is below
+`CONVERSATION_CONTEXT_TARGET_TOKENS`, merge that batch with the previous
+summary through one deterministic-temperature model call, validate the exact
+JSON schema, and atomically advance the compaction boundary. If an existing
+conversation requires several bounded summary calls, build those intermediate
+summaries in memory and commit only the final summary and boundary after every
+batch succeeds. The fixed pipeline
+and ReAct harness both receive the same structured summary followed by all
+uncompacted original turns. No fixed number of recent turns is retained.
+
+The summary may contain only user goals, confirmed requirements, decisions,
+important conversational context, and open questions. It must not summarize
+paper contents or promote prior assistant claims into facts. Original paper
+records remain in SQLite and are loaded separately by arXiv ID; only current
+paper tool results or active evidence may support technical claims. A failed
+summary call or invalid JSON leaves the previous summary, boundary, and all raw
+turns unchanged and fails the request explicitly instead of silently truncating
+history.
+
+This decision supersedes the six-turn history bound in ADR-015 and the
+100-turn storage/six-turn model-window portions of ADR-026. Their active
+evidence and persistent-conversation decisions remain in force.
+
+**Context**
+
+The six-turn window made latency predictable but discarded early goals and
+constraints as soon as the seventh later turn arrived. Increasing the fixed
+window would only postpone the same loss and would tie semantic continuity to
+turn count even though turns vary greatly in size. The 100-turn storage cap
+also conflicts with the requirement that original user wording remain
+available for audit and rebuilding.
+
+The application already stores complete turns and loads trusted paper records
+separately, so it has the source data needed for an incremental compaction
+boundary. Both the reliable pipeline and the ReAct harness need the same
+conversation representation; otherwise the selected mode would change what
+the model remembers.
+
+**Alternatives considered**
+
+- Increase the window from six to a larger fixed number: easy, but still loses
+  context according to turn count rather than actual prompt size.
+- Send the complete raw conversation on every request: lossless until the
+  provider context limit is reached, but token cost and Agent-loop headroom grow
+  without bound.
+- Rewrite a summary after every completed turn: keeps prompts stable, but adds
+  latency and cost to every request and repeatedly rewrites memory before it is
+  necessary.
+- Retrieve old turns from a vector index: useful for future cross-session or
+  episodic memory, but semantic retrieval alone does not preserve sequential
+  decisions and explicit user constraints.
+- Silently fall back to the newest raw turns when compaction fails: available,
+  but recreates the truncation behavior this decision removes and can hide lost
+  requirements from the user.
+
+**Reason**
+
+A token-triggered boundary responds to the actual resource constraint while
+keeping recent raw context dynamic. Batch compaction avoids paying for a model
+call on every turn. Separating the immutable event log from derived working
+memory protects user wording, permits summary rebuilds and migration, and
+keeps paper evidence outside the lossy memory channel.
+
+**Consequences**
+
+- Conversations can store more than 100 complete turns; API reads may return a
+  large history and may need pagination if real sessions grow substantially.
+- A request that crosses the threshold makes one extra model call before the
+  normal pipeline or ReAct loop.
+- The current token estimator is conservative and provider-independent, not an
+  exact tokenizer for the configured model. The default 12,000/8,000 thresholds
+  require calibration from real provider usage.
+- Successful compaction emits a structured Trace event with the turn count,
+  previous estimate, next estimate, and persisted boundary.
+- Summary failure blocks that request but never mutates raw messages or silently
+  drops context.
+- Summary correctness becomes a long-conversation quality boundary. Structured
+  fields and immutable raw turns make it testable and recoverable, but repeated
+  live compactions still require acceptance testing.
+
+**Review or migration trigger**
+
+Calibrate or replace the estimator when provider-reported prompt usage shows a
+consistent error large enough to waste context or risk overflow. Add summary
+version history when operators need rollback or comparison across prompts.
+Introduce retrieval-based episodic memory only when conversations become too
+large for one rolling summary, and add API pagination when full-history reads
+become a measurable latency or payload problem.

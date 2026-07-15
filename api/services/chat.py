@@ -6,6 +6,7 @@ from dataclasses import replace
 from pathlib import Path
 from queue import Queue
 from threading import Thread
+from time import perf_counter
 from collections.abc import Callable, Iterator
 from typing import Literal, TypeAlias
 
@@ -23,17 +24,19 @@ from ingestion.repository import load_papers_by_arxiv_ids
 from rag.application import RagResult, run_rag
 from rag.conversation import (
     ConversationDecision,
-    MAX_STORED_TURNS,
 )
 from rag.conversation_store import (
     ConversationNotFoundError,
     ConversationState,
-    ConversationTurnLimitError,
     append_conversation_turn,
     load_conversation_state,
 )
+from rag.context_compaction import (
+    ConversationCompactionError,
+    prepare_conversation_context,
+)
 from rag.execution_trace import TraceEvent, TraceEventCallback
-from rag.llm_client import ModelUsage
+from rag.llm_client import LLMRequestError, ModelUsage
 from rag.search import SearchResult
 from rag.similarity import build_embedding_text
 from rag.runtime import RagRuntime
@@ -68,9 +71,55 @@ def execute_chat(
     if not question:
         raise HTTPException(status_code=422, detail="question must not be empty")
 
-    state = _load_chat_state(conversation_id, runtime)
+    _load_chat_state(conversation_id, runtime)
+    compaction_started_at = perf_counter()
+    try:
+        compaction = prepare_conversation_context(
+            runtime.database_path,
+            conversation_id,
+            current_message=question,
+            settings=runtime.conversation_context_settings,
+            model_settings=runtime.settings,
+        )
+    except (ConversationCompactionError, LLMRequestError) as error:
+        failed_event = TraceEvent(
+            stage="conversation_compaction",
+            label="会话上下文压缩",
+            status="failed",
+            duration_ms=max(
+                0.0,
+                (perf_counter() - compaction_started_at) * 1_000,
+            ),
+            details={"error": str(error)},
+        )
+        if on_trace is not None:
+            on_trace(failed_event)
+        raise HTTPException(
+            status_code=503,
+            detail="会话上下文超过预算，但压缩失败；原始消息未被修改，请重试。",
+        ) from error
+    state = compaction.state
+    compaction_event: TraceEvent | None = None
+    if compaction.compacted:
+        compaction_event = TraceEvent(
+            stage="conversation_compaction",
+            label="会话上下文批量压缩",
+            status="completed",
+            duration_ms=max(
+                0.0,
+                (perf_counter() - compaction_started_at) * 1_000,
+            ),
+            details={
+                "compacted_turn_count": compaction.compacted_turn_count,
+                "estimated_tokens_before": compaction.estimated_tokens_before,
+                "estimated_tokens_after": compaction.estimated_tokens_after,
+                "compacted_through_turn_id": state.compacted_through_turn_id,
+            },
+        )
+        if on_trace is not None:
+            on_trace(compaction_event)
 
-    history = state.recent_turns
+    history = state.uncompacted_turns
     active_evidence = _load_active_evidence(
         runtime.database_path,
         state.active_evidence_ids,
@@ -87,6 +136,7 @@ def execute_chat(
                 database_path=runtime.database_path,
                 settings=runtime.settings,
                 conversation_history=history,
+                context_summary=state.context_summary,
                 active_evidence=active_evidence,
                 on_trace=on_trace,
                 on_status=on_status,
@@ -118,6 +168,7 @@ def execute_chat(
                 database_path=runtime.database_path,
                 settings=runtime.settings,
                 conversation_history=history,
+                context_summary=state.context_summary,
                 active_evidence=active_evidence,
                 on_trace=on_trace,
             )
@@ -139,9 +190,12 @@ def execute_chat(
             database_path=runtime.database_path,
             settings=runtime.settings,
             conversation_history=history,
+            context_summary=state.context_summary,
             active_evidence=active_evidence,
             on_trace=on_trace,
         )
+    if compaction_event is not None:
+        result = replace(result, trace=(compaction_event, *result.trace))
     response = build_chat_response(
         result,
         mode=payload.mode,
@@ -168,13 +222,6 @@ def execute_chat(
             raise HTTPException(
                 status_code=404,
                 detail="conversation not found",
-            ) from error
-        except ConversationTurnLimitError as error:
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    f"该会话已达到 {MAX_STORED_TURNS} 轮上限，请新建会话后继续。"
-                ),
             ) from error
     return response
 
@@ -331,13 +378,6 @@ def _load_chat_state(
         state = load_conversation_state(runtime.database_path, conversation_id)
     except ConversationNotFoundError as error:
         raise HTTPException(status_code=404, detail="conversation not found") from error
-    if state.summary.turn_count >= MAX_STORED_TURNS:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                f"该会话已达到 {MAX_STORED_TURNS} 轮上限，请新建会话后继续。"
-            ),
-        )
     return state
 
 

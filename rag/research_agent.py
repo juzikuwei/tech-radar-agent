@@ -10,7 +10,7 @@ from chromadb.api.models.Collection import Collection
 
 from config.model_settings import ModelSettings
 from rag.application import RagResult
-from rag.conversation import ConversationTurn, bounded_history
+from rag.conversation import ConversationTurn
 from rag.execution_trace import (
     TraceEvent,
     TraceEventCallback,
@@ -140,6 +140,7 @@ def run_research_agent(
     client: Any | None = None,
     on_retry: StatusCallback | None = None,
     conversation_history: tuple[ConversationTurn, ...] = (),
+    context_summary: str | None = None,
     active_evidence: tuple[SearchResult, ...] = (),
     on_trace: TraceEventCallback | None = None,
     on_status: AgentStatusCallback | None = None,
@@ -160,7 +161,8 @@ def run_research_agent(
     trace = TraceRecorder(on_event=on_trace)
     messages = _initial_messages(
         clean_question,
-        history=bounded_history(conversation_history),
+        history=tuple(conversation_history),
+        context_summary=context_summary,
         active_evidence=active_evidence,
     )
     evidence_by_id = {paper.arxiv_id: paper for paper in active_evidence}
@@ -413,6 +415,7 @@ def _initial_messages(
     question: str,
     *,
     history: tuple[ConversationTurn, ...],
+    context_summary: str | None,
     active_evidence: tuple[SearchResult, ...],
 ) -> list[dict[str, Any]]:
     messages: list[dict[str, Any]] = [
@@ -437,7 +440,14 @@ def _initial_messages(
         {
             "role": "user",
             "content": (
-                f"<current_question>\n{question}\n</current_question>\n\n"
+                (
+                    "<conversation_summary>\n"
+                    f"{context_summary}\n"
+                    "</conversation_summary>\n\n"
+                    if context_summary
+                    else ""
+                )
+                + f"<current_question>\n{question}\n</current_question>\n\n"
                 "<active_evidence>\n"
                 f"{json.dumps(active_payload, ensure_ascii=False)}\n"
                 "</active_evidence>"

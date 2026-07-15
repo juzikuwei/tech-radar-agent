@@ -101,3 +101,32 @@ def test_labels_historical_evidence_without_making_it_current() -> None:
     assert "HISTORICAL" in messages[2]["content"]
     assert "CURRENT" in messages[3]["content"]
     assert "不代表它们是本轮事实证据" in SYSTEM_PROMPT
+
+
+def test_places_compacted_summary_before_uncompacted_original_messages() -> None:
+    summary = json.dumps(
+        {
+            "user_goals": ["构建 Agent Loop"],
+            "confirmed_requirements": ["原始论文不是摘要证据"],
+            "decisions": [],
+            "important_context": [],
+            "open_questions": [],
+        },
+        ensure_ascii=False,
+    )
+    messages = build_rag_messages(
+        "继续实现",
+        [make_result()],
+        context_summary=summary,
+        conversation_history=(ConversationTurn("用户原话", "助手原回答"),),
+    )
+
+    assert [message["role"] for message in messages] == [
+        "system",
+        "user",
+        "assistant",
+        "user",
+    ]
+    assert "构建 Agent Loop" in messages[3]["content"]
+    assert messages[1]["content"] == "用户原话"
+    assert "不得作为技术事实" in SYSTEM_PROMPT

@@ -10,10 +10,7 @@ from rag.llm_client import StatusCallback, generate_text
 from rag.search import SearchResult
 
 
-MAX_CONVERSATION_TURNS = 6
-MAX_STORED_TURNS = 100
 MAX_ACTIVE_EVIDENCE = 5
-HISTORY_USER_CHAR_LIMIT = 1_000
 HISTORY_ASSISTANT_CHAR_LIMIT = 2_000
 EVIDENCE_ABSTRACT_CHAR_LIMIT = 800
 
@@ -33,7 +30,7 @@ NextAction = Literal[
 
 SYSTEM_PROMPT = """你是对话式 arXiv RAG 的证据控制器。
 
-你要根据当前追问、最近对话和上一轮活动论文证据，选择下一步动作。不要回答用户问题。
+你要根据当前追问、较早对话摘要、尚未压缩的原始对话和上一轮活动论文证据，选择下一步动作。不要回答用户问题。
 对话历史只用于理解指代和意图；只有 active_evidence 中的论文标题与摘要可以作为已有事实证据。
 
 动作规则：
@@ -91,6 +88,7 @@ class ConversationTurn:
     user_message: str
     assistant_message: str
     evidence_ids: tuple[str, ...] = ()
+    turn_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -106,30 +104,25 @@ class ConversationDecision:
     retrieval_query: str | None
 
 
-def bounded_history(
-    turns: Sequence[ConversationTurn],
-) -> tuple[ConversationTurn, ...]:
-    """Return at most the six most recent complete turns."""
-    return tuple(turns[-MAX_CONVERSATION_TURNS:])
-
-
 def build_conversation_decision_messages(
     question: str,
     history: Sequence[ConversationTurn],
     active_evidence: Sequence[SearchResult],
+    *,
+    context_summary: str | None = None,
 ) -> list[dict[str, str]]:
-    """Build a bounded prompt for choosing reuse or retrieval."""
+    """Build a compacted prompt for choosing reuse or retrieval."""
     clean_question = question.strip()
     if not clean_question:
         raise ValueError("question must not be empty")
 
     history_payload = [
         {
-            "user": turn.user_message[:HISTORY_USER_CHAR_LIMIT],
+            "user": turn.user_message,
             "assistant": turn.assistant_message[:HISTORY_ASSISTANT_CHAR_LIMIT],
             "evidence_ids": list(turn.evidence_ids),
         }
-        for turn in bounded_history(history)
+        for turn in history
     ]
     evidence_payload = [
         {
@@ -140,6 +133,9 @@ def build_conversation_decision_messages(
         for paper in active_evidence[:MAX_ACTIVE_EVIDENCE]
     ]
     payload = {
+        "conversation_summary": (
+            json.loads(context_summary) if context_summary else None
+        ),
         "conversation_history": history_payload,
         "current_question": clean_question,
         "active_evidence": evidence_payload,
@@ -295,6 +291,7 @@ def decide_conversation_action(
     history: Sequence[ConversationTurn],
     active_evidence: Sequence[SearchResult],
     *,
+    context_summary: str | None = None,
     settings: ModelSettings,
     client: Any | None = None,
     on_retry: StatusCallback | None = None,
@@ -304,6 +301,7 @@ def decide_conversation_action(
         question,
         history,
         active_evidence,
+        context_summary=context_summary,
     )
     last_error: ConversationDecisionError | None = None
     for attempt in range(2):
@@ -349,19 +347,24 @@ def decide_conversation_action(
 def build_conversational_response_messages(
     question: str,
     history: Sequence[ConversationTurn],
+    *,
+    context_summary: str | None = None,
 ) -> list[dict[str, str]]:
-    """Build a bounded prompt for a no-tool conversational response."""
+    """Build a compacted prompt for a no-tool conversational response."""
     clean_question = question.strip()
     if not clean_question:
         raise ValueError("question must not be empty")
     payload = {
+        "conversation_summary": (
+            json.loads(context_summary) if context_summary else None
+        ),
         "conversation_history": [
             {
-                "user": turn.user_message[:HISTORY_USER_CHAR_LIMIT],
+                "user": turn.user_message,
                 "assistant": turn.assistant_message[:HISTORY_ASSISTANT_CHAR_LIMIT],
                 "evidence_ids": list(turn.evidence_ids),
             }
-            for turn in bounded_history(history)
+            for turn in history
         ],
         "current_message": clean_question,
     }
@@ -378,13 +381,18 @@ def generate_conversational_response(
     question: str,
     history: Sequence[ConversationTurn],
     *,
+    context_summary: str | None = None,
     settings: ModelSettings,
     client: Any | None = None,
     on_retry: StatusCallback | None = None,
 ) -> str:
     """Generate one response that must not introduce new research claims."""
     return generate_text(
-        build_conversational_response_messages(question, history),
+        build_conversational_response_messages(
+            question,
+            history,
+            context_summary=context_summary,
+        ),
         settings=settings,
         client=client,
         on_retry=on_retry,

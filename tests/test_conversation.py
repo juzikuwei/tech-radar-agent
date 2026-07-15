@@ -7,7 +7,6 @@ from config.model_settings import ModelSettings
 from rag.conversation import (
     ConversationDecisionError,
     ConversationTurn,
-    bounded_history,
     build_conversation_decision_messages,
     decide_conversation_action,
     parse_conversation_decision,
@@ -29,21 +28,6 @@ def make_paper(arxiv_id: str = "2607.00001") -> SearchResult:
     )
 
 
-def test_bounded_history_keeps_six_complete_turns() -> None:
-    turns = [ConversationTurn(f"q{i}", f"a{i}") for i in range(8)]
-
-    bounded = bounded_history(turns)
-
-    assert [turn.user_message for turn in bounded] == [
-        "q2",
-        "q3",
-        "q4",
-        "q5",
-        "q6",
-        "q7",
-    ]
-
-
 def test_decision_prompt_contains_history_question_and_active_evidence() -> None:
     messages = build_conversation_decision_messages(
         "它能定位到具体步骤吗？",
@@ -63,6 +47,43 @@ def test_decision_prompt_contains_history_question_and_active_evidence() -> None
     assert payload["conversation_history"][0]["evidence_ids"] == ["2607.00001"]
     assert payload["active_evidence"][0]["arxiv_id"] == "2607.00001"
     assert "respond" in messages[0]["content"]
+
+
+def test_decision_prompt_contains_summary_and_all_uncompacted_turns() -> None:
+    summary = json.dumps(
+        {
+            "user_goals": ["实现上下文压缩"],
+            "confirmed_requirements": [],
+            "decisions": [],
+            "important_context": [],
+            "open_questions": [],
+        },
+        ensure_ascii=False,
+    )
+    messages = build_conversation_decision_messages(
+        "继续",
+        [ConversationTurn(f"q{i}", f"a{i}") for i in range(8)],
+        [],
+        context_summary=summary,
+    )
+    payload = json.loads(messages[1]["content"])
+
+    assert payload["conversation_summary"]["user_goals"] == ["实现上下文压缩"]
+    assert [turn["user"] for turn in payload["conversation_history"]] == [
+        f"q{i}" for i in range(8)
+    ]
+
+
+def test_decision_prompt_does_not_truncate_uncompacted_user_wording() -> None:
+    original = "用户原话" * 400
+    messages = build_conversation_decision_messages(
+        "继续",
+        [ConversationTurn(original, "assistant")],
+        [],
+    )
+    payload = json.loads(messages[1]["content"])
+
+    assert payload["conversation_history"][0]["user"] == original
 
 
 @pytest.mark.parametrize(

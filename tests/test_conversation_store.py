@@ -2,10 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from rag.conversation import MAX_CONVERSATION_TURNS, MAX_STORED_TURNS
 from rag.conversation_store import (
     ConversationNotFoundError,
-    ConversationTurnLimitError,
     append_conversation_turn,
     create_conversation,
     delete_conversation,
@@ -13,6 +11,7 @@ from rag.conversation_store import (
     initialize_conversation_store,
     list_conversations,
     load_conversation_state,
+    save_conversation_compaction,
 )
 
 
@@ -48,10 +47,10 @@ def test_creates_lists_loads_and_deletes_conversation(tmp_path: Path) -> None:
         get_conversation(database_path, created.conversation_id)
 
 
-def test_loads_only_recent_model_window_and_latest_evidence(tmp_path: Path) -> None:
+def test_loads_all_uncompacted_turns_and_latest_evidence(tmp_path: Path) -> None:
     database_path = make_store(tmp_path)
     conversation = create_conversation(database_path)
-    for index in range(MAX_CONVERSATION_TURNS + 2):
+    for index in range(8):
         append_conversation_turn(
             database_path,
             conversation.conversation_id,
@@ -62,14 +61,51 @@ def test_loads_only_recent_model_window_and_latest_evidence(tmp_path: Path) -> N
 
     state = load_conversation_state(database_path, conversation.conversation_id)
 
-    assert state.summary.turn_count == MAX_CONVERSATION_TURNS + 2
-    assert [turn.user_message for turn in state.recent_turns] == [
-        f"question {index}" for index in range(2, MAX_CONVERSATION_TURNS + 2)
+    assert state.summary.turn_count == 8
+    assert [turn.user_message for turn in state.uncompacted_turns] == [
+        f"question {index}" for index in range(8)
     ]
-    assert state.active_evidence_ids == (f"paper-{MAX_CONVERSATION_TURNS + 1}",)
-    assert state.recent_turns[-1].evidence_ids == (
-        f"paper-{MAX_CONVERSATION_TURNS + 1}",
+    assert state.context_summary is None
+    assert state.compacted_through_turn_id == 0
+    assert state.active_evidence_ids == ("paper-7",)
+    assert state.uncompacted_turns[-1].evidence_ids == ("paper-7",)
+
+
+def test_compaction_advances_context_without_modifying_raw_turns(
+    tmp_path: Path,
+) -> None:
+    database_path = make_store(tmp_path)
+    conversation = create_conversation(database_path)
+    stored_turns = [
+        append_conversation_turn(
+            database_path,
+            conversation.conversation_id,
+            user_message=f"original question {index}",
+            assistant_message=f"original answer {index}",
+        )
+        for index in range(3)
+    ]
+
+    save_conversation_compaction(
+        database_path,
+        conversation.conversation_id,
+        context_summary='{"user_goals":["goal"]}',
+        compacted_through_turn_id=stored_turns[1].turn_id,
+        expected_previous_turn_id=0,
     )
+
+    state = load_conversation_state(database_path, conversation.conversation_id)
+    stored = get_conversation(database_path, conversation.conversation_id)
+    assert state.context_summary == '{"user_goals":["goal"]}'
+    assert state.compacted_through_turn_id == stored_turns[1].turn_id
+    assert [turn.user_message for turn in state.uncompacted_turns] == [
+        "original question 2"
+    ]
+    assert [turn.user_message for turn in stored.turns] == [
+        "original question 0",
+        "original question 1",
+        "original question 2",
+    ]
 
 
 def test_conversation_response_preserves_active_research_evidence(
@@ -97,7 +133,7 @@ def test_conversation_response_preserves_active_research_evidence(
     assert direct_turn.paper_ids == ()
     assert direct_turn.response_kind == "conversation"
     assert state.active_evidence_ids == ("paper-1", "paper-2")
-    assert state.recent_turns[-1].evidence_ids == ()
+    assert state.uncompacted_turns[-1].evidence_ids == ()
 
 
 def test_uses_first_question_as_a_fifty_character_title(tmp_path: Path) -> None:
@@ -117,10 +153,10 @@ def test_uses_first_question_as_a_fifty_character_title(tmp_path: Path) -> None:
     )
 
 
-def test_rejects_turn_after_one_hundred_complete_turns(tmp_path: Path) -> None:
+def test_preserves_more_than_one_hundred_complete_turns(tmp_path: Path) -> None:
     database_path = make_store(tmp_path)
     conversation = create_conversation(database_path)
-    for index in range(MAX_STORED_TURNS):
+    for index in range(105):
         append_conversation_turn(
             database_path,
             conversation.conversation_id,
@@ -128,18 +164,10 @@ def test_rejects_turn_after_one_hundred_complete_turns(tmp_path: Path) -> None:
             assistant_message="answer",
         )
 
-    with pytest.raises(ConversationTurnLimitError):
-        append_conversation_turn(
-            database_path,
-            conversation.conversation_id,
-            user_message="one too many",
-            assistant_message="answer",
-        )
-
     assert get_conversation(
         database_path,
         conversation.conversation_id,
-    ).summary.turn_count == MAX_STORED_TURNS
+    ).summary.turn_count == 105
 
 
 def test_rejects_unknown_conversation_for_state_append_and_delete(

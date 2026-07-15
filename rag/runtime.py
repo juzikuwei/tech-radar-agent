@@ -11,6 +11,7 @@ from config.environment import load_repository_env
 load_repository_env()
 
 from config.model_settings import ModelSettings
+from config.conversation_context_settings import ConversationContextSettings
 from rag.embedder import E5Embedder
 from rag.keyword_search import DEFAULT_DATABASE_PATH, ensure_keyword_index
 from rag.reranker import CrossEncoderReranker, Reranker
@@ -28,6 +29,9 @@ class RagRuntime:
     settings: ModelSettings
     database_path: Path = DEFAULT_DATABASE_PATH
     web_search_client: WebSearchClient | None = None
+    conversation_context_settings: ConversationContextSettings = (
+        ConversationContextSettings()
+    )
 
 
 def load_rag_runtime() -> RagRuntime:
@@ -39,4 +43,5 @@ def load_rag_runtime() -> RagRuntime:
         reranker=CrossEncoderReranker(),
         settings=ModelSettings.from_env(),
         web_search_client=load_web_search_client(),
+        conversation_context_settings=ConversationContextSettings.from_env(),
     )

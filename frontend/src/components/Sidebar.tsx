@@ -1,4 +1,3 @@
-import { MAX_HISTORY_TURNS, MAX_STORED_TURNS } from "../constants";
 import type { ChatMode, ConversationSummary, KnowledgeBaseStats } from "../types";
 
 
@@ -120,12 +119,12 @@ export function Sidebar({
             value={stats ? stats.vector_count.toLocaleString("zh-CN") : "—"}
           />
           <StatusCard
-            label="已存"
-            value={`${activeTurnCount}/${MAX_STORED_TURNS}`}
+            label="已存轮次"
+            value={activeTurnCount.toLocaleString("zh-CN")}
           />
           <StatusCard
-            label="模型窗口"
-            value={`${Math.min(activeTurnCount, MAX_HISTORY_TURNS)}/${MAX_HISTORY_TURNS}`}
+            label="上下文"
+            value="Token 压缩"
           />
         </div>
         <p className={statsError ? "service-state error" : "service-state"}>

@@ -13,7 +13,6 @@ from rag.conversation import (
     ConversationTurn,
     MAX_ACTIVE_EVIDENCE,
     SAFE_CLARIFICATION_RESPONSE,
-    bounded_history,
     decide_conversation_action,
     generate_conversational_response,
 )
@@ -64,6 +63,7 @@ def answer_from_results(
     client: Any | None = None,
     on_retry: StatusCallback | None = None,
     conversation_history: tuple[ConversationTurn, ...] = (),
+    context_summary: str | None = None,
     standalone_question: str | None = None,
 ) -> str:
     """Generate a display-ready answer from already retrieved papers."""
@@ -71,6 +71,7 @@ def answer_from_results(
         question,
         results,
         conversation_history=conversation_history,
+        context_summary=context_summary,
         standalone_question=standalone_question,
     )
     return generate_text(
@@ -93,6 +94,7 @@ def run_rag(
     client: Any | None = None,
     on_retry: StatusCallback | None = None,
     conversation_history: tuple[ConversationTurn, ...] = (),
+    context_summary: str | None = None,
     active_evidence: tuple[SearchResult, ...] = (),
     on_trace: TraceEventCallback | None = None,
 ) -> RagResult:
@@ -102,7 +104,7 @@ def run_rag(
         raise ValueError("question must not be empty")
 
     trace = TraceRecorder(on_event=on_trace)
-    history = bounded_history(conversation_history)
+    history = tuple(conversation_history)
     previous_evidence = list(active_evidence[:MAX_ACTIVE_EVIDENCE])
     retrieval_attempts = 0
     standalone_question = clean_question
@@ -112,13 +114,14 @@ def run_rag(
     retrieval_decision_error: str | None = None
     should_judge_retrieval = True
 
-    if history and reranker is not None:
+    if (history or context_summary) and reranker is not None:
         started_at = start_timer()
         try:
             conversation_decision = decide_conversation_action(
                 clean_question,
                 history,
                 previous_evidence,
+                context_summary=context_summary,
                 settings=settings,
                 client=client,
                 on_retry=on_retry,
@@ -156,6 +159,7 @@ def run_rag(
                     on_retry=on_retry,
                     trace=trace,
                     conversation_decision=conversation_decision,
+                    context_summary=context_summary,
                 )
             if conversation_decision.next_action == "answer_from_existing":
                 results = _rerank_existing_evidence(
@@ -311,6 +315,7 @@ def run_rag(
             client=client,
             on_retry=on_retry,
             conversation_history=history,
+            context_summary=context_summary,
             standalone_question=standalone_question,
         )
     except LLMRequestError as error:
@@ -369,6 +374,7 @@ def _generate_conversation_response(
     on_retry: StatusCallback | None,
     trace: TraceRecorder,
     conversation_decision: ConversationDecision,
+    context_summary: str | None,
 ) -> RagResult:
     """Generate one no-tool response without introducing research claims."""
     started_at = start_timer()
@@ -376,6 +382,7 @@ def _generate_conversation_response(
         answer = generate_conversational_response(
             question,
             history,
+            context_summary=context_summary,
             settings=settings,
             client=client,
             on_retry=on_retry,

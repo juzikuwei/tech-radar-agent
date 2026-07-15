@@ -11,8 +11,6 @@ from uuid import uuid4
 from rag.conversation import (
     ConversationTurn,
     MAX_ACTIVE_EVIDENCE,
-    MAX_CONVERSATION_TURNS,
-    MAX_STORED_TURNS,
 )
 
 
@@ -25,7 +23,9 @@ CREATE TABLE IF NOT EXISTS conversations (
     title TEXT NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    active_evidence_ids_json TEXT NOT NULL DEFAULT '[]'
+    active_evidence_ids_json TEXT NOT NULL DEFAULT '[]',
+    context_summary_json TEXT,
+    compacted_through_turn_id INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS conversation_turns (
@@ -46,10 +46,6 @@ ON conversation_turns(conversation_id, turn_id);
 
 class ConversationNotFoundError(LookupError):
     """Raised when a requested conversation does not exist."""
-
-
-class ConversationTurnLimitError(ValueError):
-    """Raised when a conversation already contains the maximum turns."""
 
 
 @dataclass(frozen=True)
@@ -85,10 +81,12 @@ class StoredConversation:
 
 @dataclass(frozen=True)
 class ConversationState:
-    """Bounded state required to execute the next chat turn."""
+    """Compacted state required to execute the next chat turn."""
 
     summary: ConversationSummary
-    recent_turns: tuple[ConversationTurn, ...]
+    context_summary: str | None
+    uncompacted_turns: tuple[ConversationTurn, ...]
+    compacted_through_turn_id: int
     active_evidence_ids: tuple[str, ...]
 
 
@@ -110,8 +108,9 @@ def create_conversation(database_path: Path) -> ConversationSummary:
             """
             INSERT INTO conversations (
                 conversation_id, title, created_at, updated_at,
-                active_evidence_ids_json
-            ) VALUES (?, ?, ?, ?, ?)
+                active_evidence_ids_json, context_summary_json,
+                compacted_through_turn_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 conversation_id,
@@ -119,6 +118,8 @@ def create_conversation(database_path: Path) -> ConversationSummary:
                 created_at,
                 created_at,
                 "[]",
+                None,
+                0,
             ),
         )
         connection.commit()
@@ -193,7 +194,7 @@ def load_conversation_state(
     database_path: Path,
     conversation_id: str,
 ) -> ConversationState:
-    """Load the recent model window and latest evidence for one chat request."""
+    """Load the rolling summary, pending raw turns, and latest evidence."""
     with sqlite3.connect(database_path) as connection:
         connection.row_factory = sqlite3.Row
         connection.execute("BEGIN")
@@ -202,6 +203,8 @@ def load_conversation_state(
             SELECT conversations.conversation_id, conversations.title,
                    conversations.created_at, conversations.updated_at,
                    conversations.active_evidence_ids_json,
+                   conversations.context_summary_json,
+                   conversations.compacted_through_turn_id,
                    COUNT(conversation_turns.turn_id) AS turn_count
             FROM conversations
             LEFT JOIN conversation_turns
@@ -215,32 +218,83 @@ def load_conversation_state(
             raise ConversationNotFoundError(conversation_id)
         turn_rows = connection.execute(
             """
-            SELECT user_message, assistant_message, paper_ids_json
+            SELECT turn_id, user_message, assistant_message, paper_ids_json
             FROM conversation_turns
-            WHERE conversation_id = ?
-            ORDER BY turn_id DESC
-            LIMIT ?
+            WHERE conversation_id = ? AND turn_id > ?
+            ORDER BY turn_id ASC
             """,
-            (conversation_id, MAX_CONVERSATION_TURNS),
+            (
+                conversation_id,
+                int(summary_row["compacted_through_turn_id"]),
+            ),
         ).fetchall()
 
     summary = _summary_from_row(summary_row)
     active_evidence_ids = _paper_ids_from_json(
         str(summary_row["active_evidence_ids_json"])
     )
-    recent_turns = tuple(
+    uncompacted_turns = tuple(
         ConversationTurn(
             user_message=str(row["user_message"]),
             assistant_message=str(row["assistant_message"]),
             evidence_ids=_paper_ids_from_json(str(row["paper_ids_json"])),
+            turn_id=int(row["turn_id"]),
         )
-        for row in reversed(turn_rows)
+        for row in turn_rows
     )
     return ConversationState(
         summary=summary,
-        recent_turns=recent_turns,
+        context_summary=(
+            str(summary_row["context_summary_json"])
+            if summary_row["context_summary_json"] is not None
+            else None
+        ),
+        uncompacted_turns=uncompacted_turns,
+        compacted_through_turn_id=int(
+            summary_row["compacted_through_turn_id"]
+        ),
         active_evidence_ids=active_evidence_ids[:MAX_ACTIVE_EVIDENCE],
     )
+
+
+def save_conversation_compaction(
+    database_path: Path,
+    conversation_id: str,
+    *,
+    context_summary: str,
+    compacted_through_turn_id: int,
+    expected_previous_turn_id: int,
+) -> None:
+    """Atomically advance one conversation's rolling-summary boundary."""
+    if not context_summary.strip():
+        raise ValueError("context_summary must not be blank")
+    if compacted_through_turn_id <= expected_previous_turn_id:
+        raise ValueError("compacted_through_turn_id must advance")
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        cursor = connection.execute(
+            """
+            UPDATE conversations
+            SET context_summary_json = ?, compacted_through_turn_id = ?
+            WHERE conversation_id = ? AND compacted_through_turn_id = ?
+            """,
+            (
+                context_summary,
+                compacted_through_turn_id,
+                conversation_id,
+                expected_previous_turn_id,
+            ),
+        )
+        if cursor.rowcount != 1:
+            exists = connection.execute(
+                "SELECT 1 FROM conversations WHERE conversation_id = ?",
+                (conversation_id,),
+            ).fetchone()
+            connection.rollback()
+            if exists is None:
+                raise ConversationNotFoundError(conversation_id)
+            raise RuntimeError("conversation context changed during compaction")
+        connection.commit()
 
 
 def append_conversation_turn(
@@ -305,10 +359,6 @@ def append_conversation_turn(
                 (conversation_id,),
             ).fetchone()[0]
         )
-        if turn_count >= MAX_STORED_TURNS:
-            connection.rollback()
-            raise ConversationTurnLimitError(conversation_id)
-
         cursor = connection.execute(
             """
             INSERT INTO conversation_turns (
@@ -436,6 +486,21 @@ def _migrate_conversation_schema(connection: sqlite3.Connection) -> None:
                     """,
                     (latest[0], row[0]),
                 )
+
+    if "context_summary_json" not in conversation_columns:
+        connection.execute(
+            """
+            ALTER TABLE conversations
+            ADD COLUMN context_summary_json TEXT
+            """
+        )
+    if "compacted_through_turn_id" not in conversation_columns:
+        connection.execute(
+            """
+            ALTER TABLE conversations
+            ADD COLUMN compacted_through_turn_id INTEGER NOT NULL DEFAULT 0
+            """
+        )
 
     turn_columns = {
         str(row[1])
