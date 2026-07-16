@@ -27,7 +27,11 @@ ValidationReason = Literal[
 _BRACKET_GROUP_PATTERN = re.compile(r"\[([^\]]+)\]")
 _CITATION_SEPARATOR_PATTERN = re.compile(r"[,，;；\s]+")
 _ARXIV_ID_PATTERN = re.compile(
-    r"(?:\d{4}\.\d{4,5}|[A-Za-z][A-Za-z0-9.-]*/\d{7})(?:v\d+)?",
+    r"(?<![\d.])"
+    r"(?:\d{2}(?:0[1-9]|1[0-2])\.\d{4,5}"
+    r"|[A-Za-z][A-Za-z0-9.-]*/\d{7})"
+    r"(?:v\d+)?"
+    r"(?![\d.])",
     flags=re.IGNORECASE,
 )
 _DIRECT_CONVERSATION_PATTERNS = (

@@ -421,9 +421,30 @@ def run_research_agent(
                 else:
                     messages.append(_tool_message(call, papers))
             elif call.name == "web_search":
+                query = _string_argument(call, "query")
+                requested_count = (
+                    _integer_argument(call, "max_results") or MAX_WEB_RESULTS
+                )
+                if not query:
+                    payload = _invalid_tool_arguments(
+                        call,
+                        "query must be a non-empty string",
+                        trace,
+                    )
+                    messages.append(_tool_message(call, payload))
+                    continue
+                if not 1 <= requested_count <= MAX_WEB_RESULTS:
+                    payload = _invalid_tool_arguments(
+                        call,
+                        f"max_results must be between 1 and {MAX_WEB_RESULTS}",
+                        trace,
+                    )
+                    messages.append(_tool_message(call, payload))
+                    continue
                 web_search_count += 1
                 payload, keep_available = _execute_web_search(
-                    call,
+                    query,
+                    requested_count,
                     web_search_client=web_search_client,
                     retry_available=(
                         web_search_count < MAX_WEB_SEARCHES
@@ -615,30 +636,14 @@ def _execute_paper_search(
 
 
 def _execute_web_search(
-    call: AgentToolCall,
+    query: str,
+    requested_count: int,
     *,
     web_search_client: WebSearchClient | None,
     retry_available: bool,
     trace: TraceRecorder,
     on_status: AgentStatusCallback | None,
 ) -> tuple[dict[str, object], bool]:
-    query = _string_argument(call, "query")
-    requested_count = _integer_argument(call, "max_results") or MAX_WEB_RESULTS
-    if not query:
-        payload = _invalid_tool_arguments(
-            call,
-            "query must be a non-empty string",
-            trace,
-        )
-        return payload, False
-    if not 1 <= requested_count <= MAX_WEB_RESULTS:
-        payload = _invalid_tool_arguments(
-            call,
-            f"max_results must be between 1 and {MAX_WEB_RESULTS}",
-            trace,
-        )
-        return payload, False
-
     arguments = {"query": query, "max_results": requested_count}
     _emit_status(on_status, f"正在查询网页术语：{query}")
     started_at = start_timer()

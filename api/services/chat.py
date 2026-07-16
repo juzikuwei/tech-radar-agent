@@ -73,7 +73,6 @@ def execute_chat(
     if not question:
         raise HTTPException(status_code=422, detail="question must not be empty")
 
-    _load_chat_state(conversation_id, runtime)
     compaction_started_at = perf_counter()
     try:
         compaction = prepare_conversation_context(
@@ -83,6 +82,11 @@ def execute_chat(
             settings=runtime.conversation_context_settings,
             model_settings=runtime.settings,
         )
+    except ConversationNotFoundError as error:
+        raise HTTPException(
+            status_code=404,
+            detail="conversation not found",
+        ) from error
     except (ConversationCompactionError, LLMRequestError) as error:
         failed_event = TraceEvent(
             stage="conversation_compaction",

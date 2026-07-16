@@ -402,7 +402,7 @@ def test_unknown_citation_is_not_streamed_or_returned(
 ) -> None:
     responses = [
         message(calls=(tool_call("search_papers", {"query": "agent", "top_k": 1}),)),
-        message("虚构结论 [9999.99999]。"),
+        message("虚构结论 [9912.99999]。"),
     ]
     monkeypatch.setattr(
         "rag.research_agent.generate_agent_message",
@@ -498,3 +498,88 @@ def test_thanks_remains_conversational_when_active_evidence_exists(
     assert result.answer == "不客气。"
     assert result.response_kind == "conversation"
     assert result.papers == ()
+
+
+def test_invalid_web_search_arguments_keep_the_tool_available(
+    monkeypatch: object,
+) -> None:
+    responses = [
+        message(calls=(tool_call("web_search", {"query": "   "}),)),
+        message("请补充你想澄清的术语。"),
+    ]
+    available_names: list[list[str]] = []
+
+    def fake_generate(*args: object, **kwargs: object) -> AgentMessage:
+        available_names.append(
+            [tool["function"]["name"] for tool in kwargs["tools"]]  # type: ignore[index]
+        )
+        return responses.pop(0)
+
+    web = FakeWebSearch(results=())
+    monkeypatch.setattr("rag.research_agent.generate_agent_message", fake_generate)
+
+    result = run_research_agent(
+        "一个模糊术语",
+        top_k=5,
+        collection=object(),  # type: ignore[arg-type]
+        embedder=object(),  # type: ignore[arg-type]
+        reranker=FakeReranker(),
+        settings=SETTINGS,
+        web_search_client=web,
+    )
+
+    assert web.queries == []
+    assert available_names == [
+        ["search_papers", "web_search"],
+        ["search_papers", "web_search"],
+    ]
+    invalid = [
+        event
+        for event in result.trace
+        if event.details.get("output", {}).get("error_type") == "invalid_arguments"
+    ]
+    assert len(invalid) == 1
+    assert invalid[0].details["output"]["tool_available"] is True
+    assert result.answer == SAFE_INSUFFICIENT_EVIDENCE_RESPONSE
+
+
+def test_invalid_web_search_arguments_do_not_consume_the_web_budget(
+    monkeypatch: object,
+) -> None:
+    responses = [
+        message(calls=(tool_call("web_search", {"query": ""}, 1),)),
+        message(calls=(tool_call("web_search", {"query": "first term"}, 2),)),
+        message(calls=(tool_call("web_search", {"query": "second term"}, 3),)),
+        message("请补充你想澄清的术语。"),
+    ]
+    available_names: list[list[str]] = []
+
+    def fake_generate(*args: object, **kwargs: object) -> AgentMessage:
+        available_names.append(
+            [tool["function"]["name"] for tool in kwargs["tools"]]  # type: ignore[index]
+        )
+        return responses.pop(0)
+
+    web = FakeWebSearch(
+        results=(WebSearchResult("title", "https://example.test", "snippet"),)
+    )
+    monkeypatch.setattr("rag.research_agent.generate_agent_message", fake_generate)
+
+    result = run_research_agent(
+        "一个模糊术语",
+        top_k=5,
+        collection=object(),  # type: ignore[arg-type]
+        embedder=object(),  # type: ignore[arg-type]
+        reranker=FakeReranker(),
+        settings=SETTINGS,
+        web_search_client=web,
+    )
+
+    assert web.queries == ["first term", "second term"]
+    assert available_names == [
+        ["search_papers", "web_search"],
+        ["search_papers", "web_search"],
+        ["search_papers", "web_search"],
+        ["search_papers"],
+    ]
+    assert result.answer == SAFE_INSUFFICIENT_EVIDENCE_RESPONSE

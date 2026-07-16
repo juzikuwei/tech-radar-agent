@@ -31,14 +31,14 @@ def test_accepts_valid_citations_and_preserves_first_citation_order() -> None:
 
 def test_rejects_mixed_valid_and_unknown_arxiv_citations() -> None:
     validation = validate_research_answer(
-        "有依据的部分 [2501.00001]，虚构部分 [9999.99999]。",
+        "有依据的部分 [2501.00001]，虚构部分 [9912.99999]。",
         [paper("2501.00001")],
     )
 
     assert validation.is_valid is False
     assert validation.reason == "unknown_citation"
     assert validation.cited_ids == ("2501.00001",)
-    assert validation.unknown_citation_ids == ("9999.99999",)
+    assert validation.unknown_citation_ids == ("9912.99999",)
 
 
 def test_rejects_a_versioned_id_not_present_in_the_evidence_contract() -> None:
@@ -54,13 +54,13 @@ def test_rejects_a_versioned_id_not_present_in_the_evidence_contract() -> None:
 
 def test_rejects_an_unknown_arxiv_id_outside_citation_brackets() -> None:
     validation = validate_research_answer(
-        "正文声称另见 arXiv 9999.99999，但只给出合法引用 [2501.00001]。",
+        "正文声称另见 arXiv 9912.99999，但只给出合法引用 [2501.00001]。",
         [paper("2501.00001")],
     )
 
     assert validation.is_valid is False
     assert validation.reason == "unknown_citation"
-    assert validation.unknown_citation_ids == ("9999.99999",)
+    assert validation.unknown_citation_ids == ("9912.99999",)
 
 
 def test_rejects_research_answer_without_a_valid_citation() -> None:
@@ -76,6 +76,36 @@ def test_rejects_research_answer_without_a_valid_citation() -> None:
 def test_ignores_non_arxiv_markdown_link_labels() -> None:
     validation = validate_research_answer(
         "参考 [项目文档](https://example.test)，论文证据见 [2501.00001]。",
+        [paper("2501.00001")],
+    )
+
+    assert validation.is_valid is True
+    assert validation.unknown_citation_ids == ()
+
+
+def test_accepts_plain_decimal_numbers_in_answer_text() -> None:
+    validation = validate_research_answer(
+        "基准得分为 1234.56789，结论见 [2501.00001]。",
+        [paper("2501.00001")],
+    )
+
+    assert validation.is_valid is True
+    assert validation.unknown_citation_ids == ()
+
+
+def test_ignores_id_like_fragment_embedded_in_a_longer_number() -> None:
+    validation = validate_research_answer(
+        "样本量为 31201.56789 条，结论见 [2501.00001]。",
+        [paper("2501.00001")],
+    )
+
+    assert validation.is_valid is True
+    assert validation.unknown_citation_ids == ()
+
+
+def test_ignores_id_like_token_with_an_invalid_month_segment() -> None:
+    validation = validate_research_answer(
+        "正文提到编号 2513.00001，结论见 [2501.00001]。",
         [paper("2501.00001")],
     )
 

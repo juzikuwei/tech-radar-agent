@@ -525,7 +525,7 @@ def test_unknown_citation_is_replaced_with_a_safe_refusal(
 ) -> None:
     monkeypatch.setattr(
         "rag.application.answer_from_results",
-        lambda *args, **kwargs: "错误结论 [9999.99999]。",
+        lambda *args, **kwargs: "错误结论 [9912.99999]。",
     )
 
     result = run_rag(
@@ -540,4 +540,4 @@ def test_unknown_citation_is_replaced_with_a_safe_refusal(
     assert result.papers == ()
     assert result.generation_error is None
     assert result.trace[-1].status == "failed"
-    assert result.trace[-1].details["unknown_citation_ids"] == ["9999.99999"]
+    assert result.trace[-1].details["unknown_citation_ids"] == ["9912.99999"]
