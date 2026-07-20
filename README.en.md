@@ -2,25 +2,97 @@
 
 [中文](README.md) · **English**
 
-A local knowledge assistant for AI agent research: it fetches arXiv papers in batches, uses hybrid retrieval and reranking to find evidence, and then generates cited Chinese answers through either a fixed RAG pipeline or a bounded ReAct agent.
+[![CI](https://github.com/juzikuwei/tech-radar-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/juzikuwei/tech-radar-agent/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/github/license/juzikuwei/tech-radar-agent)](LICENSE)
 
-This repository is also an incremental agent-engineering practice project. The focus is not on stacking frameworks, but on turning data ingestion, retrieval, tool calling, failure fallback, citation constraints, and execution observability into a complete, runnable, and testable pipeline.
+Ask it a technical question about AI agents: it first searches a local arXiv paper collection for evidence, then answers in Chinese with paper citations — and explicitly refuses when the evidence is insufficient instead of making something up.
 
+This repository is also an incremental agent-engineering practice project: instead of starting from an agent framework, it uses a hand-written bounded ReAct loop to turn data ingestion, retrieval, tool calling, failure fallback, citation validation, and execution observability into a complete, runnable, and testable chain.
+
+<!-- TODO(demo GIF): record a ~20s screen capture to replace the static screenshot. Suggested content: ask a question → tool calls appear in the trace → a cited answer arrives and an inline arXiv ID opens the paper → ask something outside the knowledge base → explicit refusal. -->
 ![AI/Agent Tech Radar conversation and paper-answer interface](docs/images/tech-radar-chat.png)
 
-## Current Capabilities
+## What it does
 
-- Manually fetch arXiv in batches, save traceable JSONL snapshots, and import them idempotently into SQLite.
-- Perform Chinese–English cross-lingual hybrid retrieval and reranking with multilingual E5, BM25, RRF, and a Cross-encoder.
-- Support a fixed agentic RAG pipeline: query rewriting, evidence-sufficiency judgment, limited secondary retrieval, and refusal when evidence is insufficient.
-- Support a bounded tool-calling ReAct loop: each round the model directly chooses local paper retrieval, optional web search, or emitting the final text, calling tools at most 5 times.
-- Tavily web search is used only to clarify new terms and form more accurate paper queries; web content never becomes answer evidence and is not citable.
-- A Tavily authentication failure disables the web tool for the current request; the error is fed back as a tool observation, letting the model choose another tool, clarify, or finish. Transient network or service errors get at most one retry.
-- Every final research answer passes deterministic citation validation before it is returned or persisted: it must cite papers from the current evidence set, while unknown arXiv IDs, invented versions, citation-free research answers, and zero-result retrievals fail closed with an explicit refusal.
-- After validation, the React chat UI displays the answer in SSE chunks; verified inline arXiv IDs open the corresponding paper page. Trace merges model/tool start and completion events by default while keeping raw parameters, usage, and tool output in collapsed technical details.
-- SQLite retains every original turn, while the working context batch-compacts the oldest turns after an estimated token threshold instead of using a fixed six-turn window.
-- Provides a FastAPI HTTP API and a read-only Streamable HTTP MCP server protected by a Bearer token.
-- All critical network boundaries are replaceable or mockable; tests run offline by default.
+- **Cited answers**: every technical claim is tied to a source arXiv paper, and validated inline paper IDs open the original paper page.
+- **No fabrication**: deterministic citation validation runs before any answer is returned — citing papers outside the current evidence set, inventing IDs, or emitting a research answer without citations rejects the whole response; when retrieval finds nothing, the assistant says so explicitly.
+- **Two answering modes**: a reliable fixed agentic RAG pipeline, or a bounded ReAct agent — the model decides what to search and how often (at most 5 tool calls per request) and falls back to the fixed pipeline on unrecoverable failure.
+- **Cross-lingual retrieval**: Chinese questions can match English papers through multilingual E5 vectors, BM25 keywords, RRF fusion, and cross-encoder reranking.
+- **Long-conversation memory**: the full conversation is kept permanently in SQLite; once the working context exceeds a token threshold, the oldest turns are compacted into a structured summary, so early constraints don't slide out of a fixed window.
+- **Observable by default**: every model call and tool execution leaves a trace; the UI shows why the agent kept searching, stopped, failed, or fell back.
+- **Multiple entry points**: a React chat UI (streaming over SSE), a FastAPI HTTP API, and an authenticated read-only MCP server.
+
+## Quick Start
+
+The current development environment is based on Windows, PowerShell, and Python 3.12.
+
+### 1. Install dependencies
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+
+cd frontend
+npm install
+cd ..
+```
+
+Loading the embedding model and Cross-encoder for the first time may require downloading model files.
+
+### 2. Configure the runtime environment
+
+Create a `.env` file in the repository root that is not tracked by Git. The project intentionally does not ship a `.env.example`; configure the following variables as needed:
+
+- `LLM_API_KEY`: required, the key for the OpenAI-compatible model service.
+- `LLM_BASE_URL`: required, the API base URL of the model service.
+- `LLM_MODEL`: required, the chat model name.
+- `TAVILY_API_KEY`: optional; when absent, the ReAct `web_search` tool is disabled automatically.
+- `CONVERSATION_CONTEXT_TOKEN_THRESHOLD`: optional estimated-token threshold that triggers batch compaction; defaults to `12000`.
+- `CONVERSATION_CONTEXT_TARGET_TOKENS`: optional target for the uncompacted context after one compaction; defaults to `8000` and must be lower than the trigger threshold.
+- `MCP_AUTH_TOKEN`: required only when running the MCP server, at least 16 characters.
+- `MCP_HOST`, `MCP_PORT`, `MCP_ALLOWED_HOSTS`: optional MCP network settings.
+
+The frontend connects to `http://127.0.0.1:8000` by default. To change it, set `VITE_API_BASE_URL` in the ignored `frontend/.env.local`.
+
+### 3. Prepare local paper data
+
+List the preset arXiv queries:
+
+```powershell
+python -m ingestion.run_arxiv_ingestion --list-queries
+```
+
+Fetch a small batch and use the snapshot path printed by the command for the subsequent import:
+
+```powershell
+python -m ingestion.run_arxiv_ingestion --query-name agent_core --max-results 3
+python -m ingestion.import_snapshot data/raw/<snapshot>.jsonl
+python -m rag.indexer
+```
+
+Ingestion is a manual batch process; online Q&A never calls arXiv in real time. Snapshots, the SQLite database, and the ChromaDB index under `data/` are not committed to Git by default.
+
+### 4. Start the web app
+
+After installation, run the following from the repository root:
+
+```powershell
+.\start_services.ps1
+```
+
+The script starts FastAPI and Vite and opens `http://127.0.0.1:5173`. You can also start them separately:
+
+```powershell
+python -m uvicorn api.main:app --reload
+```
+
+```powershell
+cd frontend
+npm run dev
+```
+
+API docs are available at `http://127.0.0.1:8000/docs`.
 
 ## Design idea: make the Agent Loop explicit first
 
@@ -152,78 +224,6 @@ The system's core evidence boundary: the final answer may rely only on the arXiv
 | Frontend | React 19 + TypeScript + Vite |
 | Testing | pytest + Vitest |
 
-## Quick Start
-
-The current development environment is based on Windows, PowerShell, and Python 3.12.
-
-### 1. Install dependencies
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-
-cd frontend
-npm install
-cd ..
-```
-
-Loading the embedding model and Cross-encoder for the first time may require downloading model files.
-
-### 2. Configure the runtime environment
-
-Create a `.env` file in the repository root that is not tracked by Git. The project intentionally does not ship a `.env.example`; configure the following variables as needed:
-
-- `LLM_API_KEY`: required, the key for the OpenAI-compatible model service.
-- `LLM_BASE_URL`: required, the API base URL of the model service.
-- `LLM_MODEL`: required, the chat model name.
-- `TAVILY_API_KEY`: optional; when absent, the ReAct `web_search` tool is disabled automatically.
-- `CONVERSATION_CONTEXT_TOKEN_THRESHOLD`: optional estimated-token threshold that triggers batch compaction; defaults to `12000`.
-- `CONVERSATION_CONTEXT_TARGET_TOKENS`: optional target for the uncompacted context after one compaction; defaults to `8000` and must be lower than the trigger threshold.
-- `MCP_AUTH_TOKEN`: required only when running the MCP server, at least 16 characters.
-- `MCP_HOST`, `MCP_PORT`, `MCP_ALLOWED_HOSTS`: optional MCP network settings.
-
-The frontend connects to `http://127.0.0.1:8000` by default. To change it, set `VITE_API_BASE_URL` in the ignored `frontend/.env.local`.
-
-### 3. Prepare local paper data
-
-List the preset arXiv queries:
-
-```powershell
-python -m ingestion.run_arxiv_ingestion --list-queries
-```
-
-Fetch a small batch and use the snapshot path printed by the command for the subsequent import:
-
-```powershell
-python -m ingestion.run_arxiv_ingestion --query-name agent_core --max-results 3
-python -m ingestion.import_snapshot data/raw/<snapshot>.jsonl
-python -m rag.indexer
-```
-
-Ingestion is a manual batch process; online Q&A never calls arXiv in real time. Snapshots, the SQLite database, and the ChromaDB index under `data/` are not committed to Git by default.
-
-### 4. Start the web app
-
-After installation, run the following from the repository root:
-
-```powershell
-.\start_services.ps1
-```
-
-The script starts FastAPI and Vite and opens `http://127.0.0.1:5173`. You can also start them separately:
-
-```powershell
-python -m uvicorn api.main:app --reload
-```
-
-```powershell
-cd frontend
-npm run dev
-```
-
-API docs are available at `http://127.0.0.1:8000/docs`.
-
 ## HTTP API
 
 | Method | Path | Purpose |
@@ -272,6 +272,22 @@ npm run build
 
 Tests cover data normalization, idempotent import, retrieval, deterministic citation validation, zero-evidence refusal, token-triggered compaction, preservation of raw history, the tool-calling harness, post-validation SSE ordering, trusted citation links, Trace presentation merging, web-search failures, and the HTTP/MCP boundaries.
 
+The entire backend suite runs offline by default: the LLM client, web search, and the embedding/reranking models are replaced with controllable fakes, so it needs no `.env` and downloads no model files. GitHub Actions CI runs all backend tests plus the frontend tests and production build with `HF_HUB_OFFLINE=1`.
+
+Quality evaluation runs separately from pytest. `smoke` and `retrieval` only load the local knowledge base and local models; `agent`, `answer`, and `memory` call the answer model configured in `.env`. Generated reports are stored in the ignored `eval/results/`:
+
+```powershell
+python -m eval.run_eval --suite smoke
+python -m eval.run_eval --suite retrieval --top-k 5
+python -m eval.run_eval --suite agent --mode pipeline
+python -m eval.run_eval --suite answer --mode react
+python -m eval.run_eval --suite memory --mode pipeline
+```
+
+When first verifying the model-call boundary, append `--case-limit 1` to avoid running a full suite at once.
+
+The retrieval dataset uses manually confirmed anchor papers, so reports include `Hit@K`, MRR, and optional NDCG instead of mislabeling incomplete annotation as full Recall. The agent suite scores structured actions, evidence reuse, and retrieval budgets deterministically; the answer suite checks citations, refusals, and keyword contracts; semantic completeness and claim-level groundedness still require human review.
+
 ## Project Structure
 
 ```text
@@ -281,6 +297,7 @@ frontend/       React chat UI, trusted citation links, citation cards, and conci
 ingestion/      arXiv fetching, normalization, snapshots, and SQLite import
 mcp_server/     Read-only Streamable HTTP MCP adapter
 rag/            Retrieval, reranking, fixed pipeline, ReAct agent, answer generation, and citation validation
+eval/           Versioned quality cases, deterministic scorers, production adapters, and untracked reports
 tests/          Python tests that run offline by default
 docs/           ADR decision log and MCP usage notes
 first.md        Full scope, learning roadmap, and phase-acceptance record
@@ -305,3 +322,7 @@ The next stage is to calibrate compaction thresholds with real long conversation
 ## Development Conventions
 
 The project uses Conventional Commits and requires an ADR for important decisions about data sources, storage, models, frameworks, data contracts, deployment, and security. Run the backend tests, frontend tests, and frontend build before committing; see [AGENTS.md](AGENTS.md) for detailed collaboration constraints.
+
+## Note on answer language
+
+The assistant currently generates final answers in Chinese, while retrieval is fully cross-lingual (Chinese and English queries both match the English arXiv corpus). Making the answer language configurable is a small, isolated change in the answer-generation prompt if you want an English-only deployment.

@@ -2,25 +2,97 @@
 
 **中文** · [English](README.en.md)
 
-一个面向 AI Agent 技术研究的本地知识助手：批量收集 arXiv 论文，使用混合检索与重排寻找证据，再由固定 RAG 管线或有界 ReAct Agent 生成带引用的中文回答。
+[![CI](https://github.com/juzikuwei/tech-radar-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/juzikuwei/tech-radar-agent/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/github/license/juzikuwei/tech-radar-agent)](LICENSE)
 
-这个仓库也是一个渐进式 Agent 工程实践项目，重点不是堆叠框架，而是把数据摄取、检索、工具调用、失败降级、引用约束和执行可观测性做成可运行、可测试的完整链路。
+问它一个 AI Agent 领域的技术问题，它会先在本地 arXiv 论文库里检索证据，再给出带论文引用的中文回答；证据不足时明确拒答，而不是编造。
 
+这个仓库同时是一个渐进式 Agent 工程实践项目：不先引入 Agent 框架，而是用手写的有界 ReAct 循环，把数据摄取、检索、工具调用、失败降级、引用校验和执行可观测性做成可运行、可测试的完整链路。
+
+<!-- TODO(演示 GIF)：录一段约 20 秒的屏幕录制替换下方静态截图。建议内容：提问 → Trace 中出现工具调用 → 返回带引用回答并点开行内 arXiv ID → 再问一个知识库外的问题 → 明确拒答。 -->
 ![AI/Agent Tech Radar 对话与论文回答界面](docs/images/tech-radar-chat.png)
 
-## 当前能力
+## 它能做什么
 
-- 手动批量抓取 arXiv，保存可追溯 JSONL 快照，并幂等导入 SQLite。
-- 使用 multilingual E5、BM25、RRF 和 Cross-encoder 完成中英跨语言混合检索与重排。
-- 支持固定 Agentic RAG 管线：查询改写、证据充分性判断、有限二次检索和资料不足拒答。
-- 支持有界 tool-calling ReAct：模型每轮直接选择本地论文检索、可选网页搜索或输出最终文本，最多调用 5 次工具。
-- Tavily 网页搜索只用于澄清新术语和形成更准确的论文查询；网页内容不会进入回答证据，也不可引用。
-- Tavily 认证失败会在当前请求内禁用网页工具；错误作为 tool observation 回填，由模型选择其他工具、澄清或结束。临时网络或服务错误最多保留一次重试机会。
-- 最终研究回答在返回和持久化前执行确定性引用校验：必须引用本轮真实论文，未知 arXiv ID、虚构版本和无引用研究回答都会安全拒答；零检索结果也返回明确的资料不足说明。
-- React 聊天界面在引用校验通过后通过 SSE 分块展示回答；已验证的行内 arXiv ID 可以直接打开论文页面。Trace 默认合并模型和工具的开始/完成事件，原始参数、usage 和工具输出保留在折叠技术详情中。
-- 完整原始轮次持续保存在 SQLite，工作上下文达到 Token 阈值后自动批量压缩最早轮次，不再使用固定六轮窗口。
-- 提供 FastAPI HTTP API，以及带 Bearer Token 的只读 Streamable HTTP MCP Server。
-- 关键网络边界均可替换或 mock；测试默认离线运行。
+- **带引用的回答**：每条技术结论都标注来源 arXiv 论文，校验通过的行内论文 ID 可以直接点开原文页面。
+- **不编造**：回答返回前经过确定性引用校验——引用本轮证据之外的论文、虚构 ID 或没有引用的研究回答会被整体拒绝；检索不到证据时明确说“资料不足”。
+- **两种回答模式**：可靠的固定 Agentic RAG 管线，或有界 ReAct Agent——模型自主决定检索什么、检索几次（每次请求最多 5 次工具调用），不可恢复失败时自动降级回固定管线。
+- **中英跨语言检索**：中文提问也能命中英文论文，由 multilingual E5 向量、BM25 关键词、RRF 融合与 Cross-encoder 重排共同完成。
+- **长会话不丢上下文**：完整对话永久保存在 SQLite，工作上下文超过 Token 阈值后自动压缩为结构化摘要，早期约束不会随固定窗口滑走。
+- **过程可观测**：每次模型调用与工具执行都有 Trace，界面上能看到 Agent 为什么继续检索、停止、失败或降级。
+- **多种接入方式**：React 聊天界面（SSE 流式输出）、FastAPI HTTP API 和带鉴权的只读 MCP Server。
+
+## 快速开始
+
+当前开发环境以 Windows、PowerShell 和 Python 3.12 为基准。
+
+### 1. 安装依赖
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+
+cd frontend
+npm install
+cd ..
+```
+
+首次加载嵌入模型和 Cross-encoder 时可能需要下载模型文件。
+
+### 2. 配置运行环境
+
+在仓库根目录创建一个不会被 Git 跟踪的 `.env` 文件。项目故意不提供 `.env.example`，请按需要配置以下变量：
+
+- `LLM_API_KEY`：必需，OpenAI-compatible 模型服务的密钥。
+- `LLM_BASE_URL`：必需，模型服务的 API 地址。
+- `LLM_MODEL`：必需，聊天模型名称。
+- `TAVILY_API_KEY`：可选；缺失时自动禁用 ReAct 的 `web_search` 工具。
+- `CONVERSATION_CONTEXT_TOKEN_THRESHOLD`：可选；触发会话上下文批量压缩的估算 Token 阈值，默认 `12000`。
+- `CONVERSATION_CONTEXT_TARGET_TOKENS`：可选；一次压缩后未压缩上下文的目标 Token 数，默认 `8000`，必须小于触发阈值。
+- `MCP_AUTH_TOKEN`：仅运行 MCP Server 时必需，至少 16 个字符。
+- `MCP_HOST`、`MCP_PORT`、`MCP_ALLOWED_HOSTS`：可选的 MCP 网络设置。
+
+前端默认连接 `http://127.0.0.1:8000`。如需修改，在被忽略的 `frontend/.env.local` 中设置 `VITE_API_BASE_URL`。
+
+### 3. 准备本地论文数据
+
+列出预设 arXiv 查询：
+
+```powershell
+python -m ingestion.run_arxiv_ingestion --list-queries
+```
+
+抓取一个小批次，并将命令输出的快照路径用于后续导入：
+
+```powershell
+python -m ingestion.run_arxiv_ingestion --query-name agent_core --max-results 3
+python -m ingestion.import_snapshot data/raw/<snapshot>.jsonl
+python -m rag.indexer
+```
+
+抓取是手动批处理；在线问答不会实时调用 arXiv。`data/` 中的快照、SQLite 数据库和 ChromaDB 索引默认不提交到 Git。
+
+### 4. 启动 Web 应用
+
+安装完成后，可以在仓库根目录运行：
+
+```powershell
+.\start_services.ps1
+```
+
+脚本会启动 FastAPI 和 Vite，并打开 `http://127.0.0.1:5173`。也可以分别启动：
+
+```powershell
+python -m uvicorn api.main:app --reload
+```
+
+```powershell
+cd frontend
+npm run dev
+```
+
+API 文档位于 `http://127.0.0.1:8000/docs`。
 
 ## 项目思想：先把 Agent Loop 的边界做清楚
 
@@ -152,78 +224,6 @@ flowchart LR
 | 前端 | React 19 + TypeScript + Vite |
 | 测试 | pytest + Vitest |
 
-## 快速开始
-
-当前开发环境以 Windows、PowerShell 和 Python 3.12 为基准。
-
-### 1. 安装依赖
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-
-cd frontend
-npm install
-cd ..
-```
-
-首次加载嵌入模型和 Cross-encoder 时可能需要下载模型文件。
-
-### 2. 配置运行环境
-
-在仓库根目录创建一个不会被 Git 跟踪的 `.env` 文件。项目故意不提供 `.env.example`，请按需要配置以下变量：
-
-- `LLM_API_KEY`：必需，OpenAI-compatible 模型服务的密钥。
-- `LLM_BASE_URL`：必需，模型服务的 API 地址。
-- `LLM_MODEL`：必需，聊天模型名称。
-- `TAVILY_API_KEY`：可选；缺失时自动禁用 ReAct 的 `web_search` 工具。
-- `CONVERSATION_CONTEXT_TOKEN_THRESHOLD`：可选；触发会话上下文批量压缩的估算 Token 阈值，默认 `12000`。
-- `CONVERSATION_CONTEXT_TARGET_TOKENS`：可选；一次压缩后未压缩上下文的目标 Token 数，默认 `8000`，必须小于触发阈值。
-- `MCP_AUTH_TOKEN`：仅运行 MCP Server 时必需，至少 16 个字符。
-- `MCP_HOST`、`MCP_PORT`、`MCP_ALLOWED_HOSTS`：可选的 MCP 网络设置。
-
-前端默认连接 `http://127.0.0.1:8000`。如需修改，在被忽略的 `frontend/.env.local` 中设置 `VITE_API_BASE_URL`。
-
-### 3. 准备本地论文数据
-
-列出预设 arXiv 查询：
-
-```powershell
-python -m ingestion.run_arxiv_ingestion --list-queries
-```
-
-抓取一个小批次，并将命令输出的快照路径用于后续导入：
-
-```powershell
-python -m ingestion.run_arxiv_ingestion --query-name agent_core --max-results 3
-python -m ingestion.import_snapshot data/raw/<snapshot>.jsonl
-python -m rag.indexer
-```
-
-抓取是手动批处理；在线问答不会实时调用 arXiv。`data/` 中的快照、SQLite 数据库和 ChromaDB 索引默认不提交到 Git。
-
-### 4. 启动 Web 应用
-
-安装完成后，可以在仓库根目录运行：
-
-```powershell
-.\start_services.ps1
-```
-
-脚本会启动 FastAPI 和 Vite，并打开 `http://127.0.0.1:5173`。也可以分别启动：
-
-```powershell
-python -m uvicorn api.main:app --reload
-```
-
-```powershell
-cd frontend
-npm run dev
-```
-
-API 文档位于 `http://127.0.0.1:8000/docs`。
-
 ## HTTP API
 
 | 方法 | 路径 | 用途 |
@@ -272,6 +272,22 @@ npm run build
 
 测试覆盖数据规范化、幂等导入、检索、确定性引用校验、零证据拒答、Token 阈值压缩、原始历史保留、tool-calling harness、校验后 SSE 顺序、可信引用链接、Trace 展示合并、网页搜索失败和 HTTP/MCP 边界。
 
+整个后端套件默认离线运行：LLM 客户端、网页搜索、嵌入与重排模型在测试中都被替换为可控实现，不需要 `.env`，也不会下载模型文件。GitHub Actions CI 在 `HF_HUB_OFFLINE=1` 下运行全部后端测试，以及前端测试与生产构建。
+
+质量评测与 pytest 分开运行。`smoke` 和 `retrieval` 只加载本地知识库与本地模型；`agent`、`answer` 和 `memory` 会调用 `.env` 中配置的回答模型。生成报告保存在已忽略的 `eval/results/`：
+
+```powershell
+python -m eval.run_eval --suite smoke
+python -m eval.run_eval --suite retrieval --top-k 5
+python -m eval.run_eval --suite agent --mode pipeline
+python -m eval.run_eval --suite answer --mode react
+python -m eval.run_eval --suite memory --mode pipeline
+```
+
+首次验证模型调用边界时可追加 `--case-limit 1`，避免一次运行完整套件。
+
+检索数据集使用人工确认的锚点论文，因此报告 `Hit@K`、MRR 和可选 NDCG，不把不完整标注误称为完整 Recall。Agent 通过结构化动作、证据复用和检索预算确定性评分；回答套件检查引用、拒答和关键词契约；语义完整性与 claim-level groundedness 仍需人工复核。
+
 ## 项目结构
 
 ```text
@@ -281,6 +297,7 @@ frontend/       React 聊天界面、可信引用链接、引用卡片与精简 
 ingestion/      arXiv 抓取、规范化、快照与 SQLite 导入
 mcp_server/     只读 Streamable HTTP MCP 适配器
 rag/            检索、重排、固定管线、ReAct Agent、回答生成与引用校验
+eval/           版本化质量案例、确定性评分器、生产适配器与未跟踪报告
 tests/          默认离线运行的 Python 测试
 docs/           ADR 决策日志和 MCP 使用说明
 first.md        完整范围、学习路线与阶段验收记录
