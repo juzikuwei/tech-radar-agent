@@ -1,0 +1,41 @@
+{
+  "dataset_version": 1,
+  "description": "Long-session cases for token-triggered summary retention.",
+  "cases": [
+    {
+      "id": "preserve_local_citation_constraint",
+      "turns": [
+        "我只允许回答引用本地 arXiv 论文，不要把网页内容当作证据。",
+        "请解释 Agent 的工具调用边界。",
+        "请比较两种 Agent 编排方式，并说明各自限制。",
+        "现在回顾我的最初约束，并据此回答一个新的研究问题。"
+      ],
+      "required_memory_phrases": ["本地 arXiv", "网页内容"],
+      "min_compactions": 2,
+      "tags": ["constraint", "citation"]
+    },
+    {
+      "id": "preserve_user_goal",
+      "turns": [
+        "我的目标是理解 Agentic RAG 的完整 ingestion-to-answer pipeline。",
+        "先解释数据摄取和混合检索。",
+        "再解释引用校验和拒答。",
+        "最后总结仍未解决的问题。"
+      ],
+      "required_memory_phrases": ["ingestion-to-answer", "混合检索"],
+      "min_compactions": 2,
+      "tags": ["goal", "pipeline"]
+    },
+    {
+      "id": "preserve_latest_decision",
+      "turns": [
+        "我们决定先校准 Token 压缩阈值，暂时不做跨会话长期记忆。",
+        "请继续讨论当前的多轮上下文问题。",
+        "在多次压缩后再次确认下一步。"
+      ],
+      "required_memory_phrases": ["压缩阈值", "跨会话长期记忆"],
+      "min_compactions": 1,
+      "tags": ["decision"]
+    }
+  ]
+}

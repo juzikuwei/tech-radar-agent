@@ -1,0 +1,111 @@
+{
+  "dataset_version": 2,
+  "description": "Anchor-based retrieval checks over the current local arXiv corpus.",
+  "label_policy": "must_find_ids are reviewed anchor papers, not a complete relevance pool; report Hit@K rather than full Recall@K.",
+  "cases": [
+    {
+      "id": "memory_long_horizon",
+      "query": "Agent 在长任务中如何避免遗忘重要状态？",
+      "answerable": true,
+      "must_find_ids": ["2607.08716"],
+      "relevance_grades": {"2607.08716": 3},
+      "tags": ["zh_en", "memory"]
+    },
+    {
+      "id": "recursive_web_search",
+      "query": "多 Agent 如何通过递归委派完成深度和广度兼顾的网页搜索？",
+      "answerable": true,
+      "must_find_ids": ["2607.08662"],
+      "relevance_grades": {"2607.08662": 3},
+      "tags": ["zh_en", "multi_agent"]
+    },
+    {
+      "id": "hallucination_game_theory",
+      "query": "博弈论驱动的多 Agent 框架能否减少科学领域语言模型幻觉？",
+      "answerable": true,
+      "must_find_ids": ["2607.08403"],
+      "relevance_grades": {"2607.08403": 3},
+      "tags": ["zh_en", "evaluation"]
+    },
+    {
+      "id": "mcp_compliance",
+      "query": "MCP Agent 如何把关键基础设施文档转换成可审计的持续合规材料？",
+      "answerable": true,
+      "must_find_ids": ["2607.08288"],
+      "relevance_grades": {"2607.08288": 3},
+      "tags": ["acronym", "mcp"]
+    },
+    {
+      "id": "web_prompt_injection",
+      "query": "网页 Agent 如何防御跨站提示词注入并限制不可信页面内容的权限？",
+      "answerable": true,
+      "must_find_ids": ["2607.08147"],
+      "relevance_grades": {"2607.08147": 3},
+      "tags": ["zh_en", "safety"]
+    },
+    {
+      "id": "multi_agent_failure_localization",
+      "query": "多 Agent 系统执行失败后，如何定位负责的 Agent 和最早出错步骤？",
+      "answerable": true,
+      "must_find_ids": ["2607.07989"],
+      "relevance_grades": {"2607.07989": 3},
+      "tags": ["zh_en", "observability"]
+    },
+    {
+      "id": "grounded_skill_library",
+      "query": "如何为自主 Agent 建设带来源引用和质量门控的大规模技能库？",
+      "answerable": true,
+      "must_find_ids": ["2607.07676"],
+      "relevance_grades": {"2607.07676": 3},
+      "tags": ["zh_en", "skills"]
+    },
+    {
+      "id": "auditable_enterprise_harness",
+      "query": "企业 LLM Agent 如何把提示词原型改造成可审计、可验证的工程系统？",
+      "answerable": true,
+      "must_find_ids": ["2607.08028"],
+      "relevance_grades": {"2607.08028": 3},
+      "tags": ["acronym", "engineering"]
+    },
+    {
+      "id": "agentic_rag_underwriting",
+      "query": "Agentic RAG 在保险自动核保中相比普通 RAG 有什么优势？",
+      "answerable": true,
+      "must_find_ids": ["2607.07858"],
+      "relevance_grades": {"2607.07858": 3},
+      "tags": ["comparison", "agentic_rag"]
+    },
+    {
+      "id": "deployment_rule_safety",
+      "query": "部署规则如何因果影响多 Agent 系统的集体安全行为？",
+      "answerable": true,
+      "must_find_ids": ["2607.07695"],
+      "relevance_grades": {"2607.07695": 3},
+      "tags": ["causal", "safety"]
+    },
+    {
+      "id": "langgraph_vs_crewai",
+      "query": "LangGraph 和 CrewAI 在循环控制上的主要区别是什么？",
+      "answerable": false,
+      "must_find_ids": [],
+      "relevance_grades": {},
+      "tags": ["unanswerable", "comparison"]
+    },
+    {
+      "id": "mcp_protocol_origin",
+      "query": "MCP 协议最初由谁提出，它的标准消息格式是什么？",
+      "answerable": false,
+      "must_find_ids": [],
+      "relevance_grades": {},
+      "tags": ["unanswerable", "mcp"]
+    },
+    {
+      "id": "vector_database_comparison",
+      "query": "ChromaDB、Milvus 和 Weaviate 在百万级向量检索中的性能差异是什么？",
+      "answerable": false,
+      "must_find_ids": [],
+      "relevance_grades": {},
+      "tags": ["unanswerable", "comparison"]
+    }
+  ]
+}

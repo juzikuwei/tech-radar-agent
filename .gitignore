@@ -9,8 +9,10 @@ data/raw/*.tmp
 data/*.db
 data/chroma/
 
-eval/results/agent_*.json
+eval/results/*.json
 
 frontend/node_modules/
 frontend/dist/
 frontend/.env.local
+
+drafts/

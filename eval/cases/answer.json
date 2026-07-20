@@ -1,0 +1,36 @@
+{
+  "dataset_version": 1,
+  "description": "Deterministic answer contracts; semantic groundedness is reviewed separately.",
+  "cases": [
+    {
+      "id": "grounded_failure_localization",
+      "question": "多 Agent 系统执行失败后，如何定位负责的 Agent 和最早出错步骤？",
+      "answerable": true,
+      "expected_citations": ["2607.07989"],
+      "required_phrases": ["失败"],
+      "tags": ["answerable", "citation"]
+    },
+    {
+      "id": "grounded_memory",
+      "question": "Agent 在长任务中如何避免遗忘重要状态？",
+      "answerable": true,
+      "expected_citations": ["2607.08716"],
+      "required_phrases": ["记忆"],
+      "tags": ["answerable", "citation"]
+    },
+    {
+      "id": "refuse_missing_protocol_fact",
+      "question": "MCP 协议最初由谁提出，它的标准消息格式是什么？",
+      "answerable": false,
+      "must_refuse": true,
+      "tags": ["unanswerable", "refusal"]
+    },
+    {
+      "id": "refuse_vector_database_benchmark",
+      "question": "ChromaDB、Milvus 和 Weaviate 在百万级向量检索中的性能差异是什么？",
+      "answerable": false,
+      "must_refuse": true,
+      "tags": ["unanswerable", "refusal"]
+    }
+  ]
+}

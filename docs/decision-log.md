@@ -1904,3 +1904,204 @@ Markdown containers not covered by the shared renderer. Add same-page citation
 anchors when users need to jump to paper cards instead of opening arXiv. Revisit
 Trace grouping when parallel tools, nested spans, or persisted cross-request
 traces make sequential lifecycle pairing insufficient.
+
+---
+
+## ADR-032: Reintroduce a small layered evaluation suite
+
+- **Status:** Accepted; revises ADR-023
+- **Date:** 2026-07-16
+
+**Decision**
+
+Reintroduce a small tracked `eval/` subsystem with separate retrieval, Agent,
+answer/refusal, and long-conversation memory datasets. Keep pytest responsible
+for deterministic implementation behavior and run quality evaluations through
+the production retrieval and conversation boundaries. Store generated JSON
+reports under ignored `eval/results/`.
+
+Use reviewed anchor papers for the first retrieval dataset and report Hit@K,
+MRR, and optional NDCG. Do not call the anchors a complete relevance pool or
+report full Recall@K. Score Agent control actions, evidence reuse, and retrieval
+budgets deterministically from structured results. Score citation identity,
+refusal, and small answer contracts deterministically, while leaving semantic
+completeness and claim-level entailment for human review. Run memory cases in
+transactionally consistent temporary copies of the production SQLite database
+so persistent user conversations are never modified.
+
+Do not add RAGAS, DeepEval, or a second LLM Judge in this version. The local
+retrieval smoke suite must run without an answer-model API call. Agent, answer,
+and memory suites are explicit model-backed commands rather than default pytest
+work.
+
+**Context**
+
+ADR-023 removed an earlier evaluation subsystem because its relevance labels
+described a 50-paper corpus and appeared authoritative after the corpus and
+Agent workflow changed. The project now has more than ten thousand local
+papers, both fixed Pipeline and ReAct modes, deterministic citation validation,
+tool budgets, persistent conversations, and token-triggered compaction. These
+boundaries create concrete regression questions that individual Trace review
+cannot answer consistently across prompt and model changes.
+
+The current milestone also requires calibrating compaction thresholds with real
+long sessions. That decision needs repeatable cases and comparable reports,
+not only manual browser conversations.
+
+**Alternatives considered**
+
+- Restore the deleted evaluation files unchanged: quick, but their corpus claim
+  and labels are stale and the runner predates the current production Agent.
+- Add a complete human relevance pool immediately: supports Recall and robust
+  NDCG, but creates more annotation work than the current personal project can
+  maintain.
+- Use an LLM Judge for every answer: scales semantic scoring, but adds cost,
+  nondeterminism, model bias, and another prompt that itself needs evaluation.
+- Keep only Trace inspection: useful for diagnosis, but cannot produce a stable
+  regression baseline across many cases.
+
+**Reason**
+
+The selected design answers current engineering decisions with the smallest
+maintainable datasets. Anchor metrics are honest about incomplete labels,
+structured control checks reuse fields the product already exposes, and
+dependency-injected runners remain fully testable offline. Production adapters
+ensure live evaluations exercise the same code paths as users.
+
+**Consequences**
+
+- Tracked cases are reviewable fixtures; generated reports and model text remain
+  untracked.
+- Retrieval, control flow, answer contracts, and memory retention can regress
+  independently and show separate failure causes.
+- A passing deterministic answer case does not prove every claim is supported.
+- Model-backed suites incur normal provider cost and may vary between runs;
+  pytest remains offline and deterministic.
+- Corpus growth can invalidate an anchor or reveal newer, equally relevant
+  papers. Such cases must be reviewed instead of silently changing thresholds.
+
+**Review or migration trigger**
+
+Build a pooled graded relevance set when retrieval configuration decisions need
+true Recall@K or stronger NDCG comparisons. Add a calibrated LLM Judge only
+when human claim-level review becomes the evaluation bottleneck, and validate
+it against a held-out human-scored sample. Add online evaluation when multiple
+users generate enough consented feedback to support meaningful monitoring.
+
+---
+
+## ADR-033: Invalid web-search arguments are recoverable, not disabling
+
+- **Status:** Accepted; refines ADR-027/ADR-028
+- **Date:** 2026-07-16
+
+**Decision**
+
+Validate `web_search` arguments in the harness loop before any budget is
+consumed. An empty query or an out-of-range `max_results` produces an
+`invalid_arguments` observation with `tool_available: true`, does not count
+against the two-web-search budget, and leaves the tool on the next turn's
+menu. Only executed web searches consume the web budget, and only classified
+non-retryable execution failures (authentication, configuration) remove the
+tool for the remainder of the request. The overall five-tool-call budget still
+counts every accepted call, including invalid ones, to bound repeated mistakes.
+
+**Context**
+
+The previous implementation validated arguments inside `_execute_web_search`
+and returned `keep_available=False` on validation failure. One malformed model
+call therefore disabled `web_search` for the whole request, while the
+observation payload simultaneously told the model `tool_available: true`. The
+harness state and the model-visible state disagreed, and an argument slip cost
+the same as an authentication failure. The web-search counter was also
+incremented before validation, so invalid calls consumed the scarce web budget.
+
+**Alternatives considered**
+
+- Keep disabling on invalid arguments: simple, but conflates a recoverable
+  model mistake with a terminal provider failure and contradicts the payload.
+- Stop counting invalid calls against the overall tool budget too: friendlier,
+  but removes the only bound on a model looping over malformed calls.
+- Repair arguments in the harness (default the query, clamp counts): hides the
+  mistake from the model and blurs responsibility for tool selection.
+
+**Reason**
+
+ADR-027 established that tool availability must be derived from classified
+failure types. Argument validation is not a provider failure; it is model
+feedback. Letting the model retry with corrected arguments matches how
+`search_papers` already treats invalid arguments and keeps the observation
+contract truthful.
+
+**Consequences**
+
+- A malformed web call costs one generic tool-call slot but no web allowance,
+  and the model can immediately retry with corrected arguments.
+- `_execute_web_search` now receives validated arguments only and is solely
+  responsible for execution and failure classification.
+- Authentication/configuration failures behave exactly as before (tests for
+  ADR-027 behavior still pass unchanged).
+
+**Review or migration trigger**
+
+Revisit if a future tool gains expensive side effects on invalid calls, or if
+live traces show models looping on malformed arguments despite the structured
+feedback; then consider charging invalid calls against tool-specific budgets.
+
+---
+
+## ADR-034: Constrain the unknown arXiv-ID scan to plausible identifiers
+
+- **Status:** Accepted; refines ADR-030
+- **Date:** 2026-07-16
+
+**Decision**
+
+Keep scanning the entire research answer for unknown arXiv IDs, but require a
+plausible identifier shape before rejecting: the modern `YYMM.NNNNN` form must
+have a month segment of 01–12, and a candidate must not be embedded inside a
+longer number or decimal (guarded by lookaround assertions). Old-style
+`archive/NNNNNNN` IDs keep their existing shape. Citation extraction from
+bracket groups is unchanged; unknown plausible IDs anywhere in the answer still
+reject the whole response.
+
+**Context**
+
+The previous pattern `\d{4}\.\d{4,5}` matched any four-digits-dot-four-or-five-
+digits sequence anywhere in the text. A benchmark score such as `1234.56789`, or
+an ID-like fragment inside a longer number such as `31201.56789`, was treated as
+a fabricated citation and forced a safe refusal of an otherwise valid answer.
+False rejections erode trust in the refusal mechanism itself.
+
+**Alternatives considered**
+
+- Restrict the scan to bracket groups only: removes all numeric false
+  positives, but abandons the documented guarantee that fabricated IDs in prose
+  (for example "另见 arXiv 9912.99999") also reject the answer.
+- Require an `arXiv:` prefix for out-of-bracket matches: precise, but models
+  frequently mention IDs without the prefix, reopening the fabrication gap.
+- Ask the model to avoid ID-like numbers: prompt-level, unenforceable.
+
+**Reason**
+
+The refusal boundary exists to stop fabricated citations from reaching users,
+not to police arithmetic in prose. Month validation and boundary assertions are
+deterministic, cost nothing at runtime, exclude no real arXiv identifier, and
+preserve the whole-text fabrication guarantee for every plausibly real ID.
+
+**Consequences**
+
+- Ordinary decimals and embedded numeric fragments no longer trigger refusal.
+- A fabricated token with an impossible month (for example `2513.00001`) is no
+  longer detected as an ID; it can appear in a displayed answer as inert text.
+  It cannot become a citation, a paper card, or a link, because those flow only
+  from validated bracket citations matched against actual evidence.
+- Test fixtures use `9912.99999` (valid shape, unknown paper) as the canonical
+  fabricated ID.
+
+**Review or migration trigger**
+
+Revisit when arXiv changes its identifier scheme, or if live traces show
+fabricated IDs with impossible months appearing in displayed answers often
+enough to mislead readers; then consider a display-layer marker instead of
+rejection.
