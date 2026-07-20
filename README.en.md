@@ -300,7 +300,6 @@ rag/            Retrieval, reranking, fixed pipeline, ReAct agent, answer genera
 eval/           Versioned quality cases, deterministic scorers, production adapters, and untracked reports
 tests/          Python tests that run offline by default
 docs/           ADR decision log and MCP usage notes
-first.md        Full scope, learning roadmap, and phase-acceptance record
 ```
 
 The FastAPI, MCP, and command-line entry points reuse the domain capabilities in `rag/`; network, storage, retrieval, and UI logic stay separated.
@@ -317,7 +316,7 @@ The FastAPI, MCP, and command-line entry points reuse the domain capabilities in
 - Deterministic validation guarantees that citation IDs belong to the current evidence set, but it does not prove that every sentence is fully entailed by the cited abstracts; finer-grained claim-level groundedness still requires later evaluation or bounded reflection.
 - Cross-conversation long-term memory, LangGraph, human-in-the-loop, and multi-agent orchestration are not yet introduced.
 
-The next stage is to calibrate compaction thresholds with real long conversations and verify that early user constraints survive repeated batch compactions. See [first.md](first.md) for the full milestones and [docs/decision-log.md](docs/decision-log.md) for key architectural trade-offs.
+The next stage is to calibrate compaction thresholds with real long conversations and verify that early user constraints survive repeated batch compactions. See [docs/decision-log.md](docs/decision-log.md) for key architectural trade-offs.
 
 ## Development Conventions
 

@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-`first.md` defines scope, architecture, milestones, and the directory layout (section 8). Create modules only when required. Keep generated data untracked except for small fixtures; never commit `.venv/`.
+The untracked local notes file `first.md` defines scope, architecture, milestones, and the directory layout (section 8). Create modules only when required. Keep generated data untracked except for small fixtures; never commit `.venv/`.
 
 ## Build, Test, and Development Commands
 
