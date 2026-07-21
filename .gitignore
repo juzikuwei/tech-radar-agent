@@ -7,13 +7,20 @@ __pycache__/
 data/raw/*.jsonl
 data/raw/*.tmp
 data/*.db
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm
 data/chroma/
 
 eval/results/*.json
 
 frontend/node_modules/
 frontend/dist/
+frontend/.env
 frontend/.env.local
+
+logs/
+.run/
 
 drafts/
 first.md

@@ -2,7 +2,17 @@
 
 ## Project Structure & Module Organization
 
-The untracked local notes file `first.md` defines scope, architecture, milestones, and the directory layout (section 8). Create modules only when required. Keep generated data untracked except for small fixtures; never commit `.venv/`.
+Each top-level package owns one concern:
+
+- `ingestion/`: arXiv fetching, normalization, JSONL snapshots, and the SQLite repository. Batch ingestion is manual; question answering never calls arXiv live.
+- `rag/`: embedding, hybrid retrieval, reranking, answer generation, conversation state, and agent orchestration.
+- `api/`: the FastAPI HTTP boundary. It reuses `rag/` services and holds no retrieval logic of its own.
+- `mcp_server/`: read-only MCP tools sharing the same runtime as `api/`.
+- `frontend/`: the React + TypeScript + Vite client.
+- `eval/`: local evaluation suites and their tracked case datasets; generated reports stay untracked.
+- `config/`: environment and query configuration. `tests/`: the offline pytest suite. `data/`: local SQLite and ChromaDB stores, untracked.
+
+Create modules only when required. Keep generated data untracked except for small fixtures; never commit `.venv/`.
 
 ## Build, Test, and Development Commands
 
@@ -11,6 +21,7 @@ Run from the repository root in PowerShell:
 ```powershell
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
+python -m pip install -r requirements-dev.txt
 python -m pytest
 python -m uvicorn api.main:app --reload
 python -m mcp_server.main
@@ -50,6 +61,6 @@ Keep keys in the ignored `.env` file and never commit secrets, databases, vector
 
 Use teaching-oriented co-development. Before coding, explain the concept and one runnable goal. Let the user implement or execute meaningful parts, then review results and failures. Do not generate the whole project; connect additions to limitations already observed.
 
-For the extension stages in `first.md` (stage 9+), never start implementing a stage without first explaining its concept, runnable goal, and change scope, and receiving explicit user confirmation.
+For any planned extension stage or major new capability (for example a new agent pattern, orchestration framework, memory layer, or data source), never start implementing without first explaining its concept, runnable goal, and change scope, and receiving explicit user confirmation.
 
 For every significant module, ensure the user can explain why it exists, the problem it solves, its inputs and outputs, its assumptions, and its failure modes. If not, pause that module and study or test the concept before continuing. Develop systematic thinking with one or two questions grounded in the current milestone, covering boundaries, dependencies, state, trade-offs, observability, or acceptance criteria. Connect answers to the complete ingestion-to-answer pipeline; questions must advance work, not test trivia.

@@ -1,8 +1,10 @@
 from types import SimpleNamespace
+from datetime import datetime
 from pathlib import Path
 import sqlite3
 
 from eval.memory_adapter import _copy_sqlite_database
+from eval.run_eval import default_output_path
 from eval.runner import run_agent_cases, run_answer_cases, run_memory_cases, run_retrieval_cases
 from eval.schemas import (
     AgentCase,
@@ -83,6 +85,17 @@ def test_answer_and_memory_runners_return_pass_rates() -> None:
 
     assert answer_report["summary"]["pass_rate"] == 1.0
     assert memory_report["summary"]["pass_rate"] == 1.0
+
+
+def test_default_output_path_separates_suites_by_name_and_timestamp() -> None:
+    moment = datetime(2026, 7, 21, 15, 30, 0)
+
+    retrieval = default_output_path("retrieval", now=moment)
+    memory = default_output_path("memory", now=moment)
+
+    assert retrieval == Path("eval/results/retrieval_20260721_153000.json")
+    assert memory == Path("eval/results/memory_20260721_153000.json")
+    assert retrieval != memory
 
 
 def test_memory_adapter_copies_sqlite_without_mutating_source(tmp_path: Path) -> None:

@@ -42,7 +42,13 @@ from rag.vector_store import get_persistent_collection
 
 
 CASES_DIR = Path(__file__).parent / "cases"
-DEFAULT_OUTPUT = Path("eval/results/latest.json")
+RESULTS_DIR = Path("eval/results")
+
+
+def default_output_path(suite: str, *, now: datetime | None = None) -> Path:
+    """Return a per-suite, timestamped report path so suites never overwrite each other."""
+    stamp = (now or datetime.now()).strftime("%Y%m%d_%H%M%S")
+    return RESULTS_DIR / f"{suite}_{stamp}.json"
 
 
 def _load_local_retrieval_runtime() -> tuple[Any, E5Embedder, CrossEncoderReranker]:
@@ -138,13 +144,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--case-limit", type=int)
     parser.add_argument("--memory-token-threshold", type=int, default=500)
     parser.add_argument("--memory-target-tokens", type=int, default=220)
-    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="Report path; defaults to eval/results/{suite}_{timestamp}.json",
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     """Run one local suite and write a JSON report."""
     args = build_parser().parse_args(argv)
+    if args.output is None:
+        args.output = default_output_path(args.suite)
     if args.top_k <= 0:
         print("Evaluation failed: --top-k must be greater than zero")
         return 1

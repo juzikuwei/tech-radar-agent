@@ -1,0 +1,4 @@
+# Development-only dependencies, pinned exactly for reproducible installs.
+# To upgrade: bump the version here, run `python -m pip install -r requirements-dev.txt`,
+# then run the test suite before committing.
+pytest==9.1.1

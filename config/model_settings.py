@@ -28,6 +28,4 @@ class ModelSettings:
         if missing:
             names = ", ".join(f"LLM_{name.upper()}" for name in missing)
             raise ValueError(f"Missing required environment variables: {names}")
-        if values["api_key"] == "replace_with_your_deepseek_api_key":
-            raise ValueError("Replace the placeholder LLM_API_KEY in .env")
         return cls(**values)

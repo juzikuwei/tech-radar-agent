@@ -57,3 +57,30 @@ def test_agent_loader_rejects_retrieval_budget_above_production_limit(
     with pytest.raises(EvalDataError, match="retrieval bounds"):
         load_agent_cases(path)
 
+
+def test_memory_loader_preserves_repeated_turns_in_order(tmp_path: Path) -> None:
+    path = tmp_path / "memory.json"
+    path.write_text(
+        '{"dataset_version": 1, "cases": [{"id": "m", '
+        '"turns": ["remember my budget", "what fits?", "what fits?"], '
+        '"required_memory_phrases": ["budget"]}]}',
+        encoding="utf-8",
+    )
+
+    _, cases = load_memory_cases(path)
+
+    assert cases[0].turns == ("remember my budget", "what fits?", "what fits?")
+
+
+def test_memory_loader_rejects_blank_turn(tmp_path: Path) -> None:
+    path = tmp_path / "memory.json"
+    path.write_text(
+        '{"dataset_version": 1, "cases": [{"id": "m", '
+        '"turns": ["first", "  "], '
+        '"required_memory_phrases": ["budget"]}]}',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(EvalDataError, match="m.turns"):
+        load_memory_cases(path)
+

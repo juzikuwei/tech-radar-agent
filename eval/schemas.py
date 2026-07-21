@@ -103,6 +103,19 @@ def _string_tuple(value: object, *, field: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(item.strip() for item in value))
 
 
+def _turns_tuple(value: object, *, field: str) -> tuple[str, ...]:
+    """Validate conversation turns: ordered, duplicates preserved.
+
+    Unlike `_string_tuple`, this must not deduplicate, because a user
+    legitimately repeating the same message is part of the script.
+    """
+    if not isinstance(value, list) or not all(
+        isinstance(item, str) and item.strip() for item in value
+    ):
+        raise EvalDataError(f"{field} must be a list of non-empty strings")
+    return tuple(item.strip() for item in value)
+
+
 def _tags(value: object, *, field: str) -> tuple[str, ...]:
     if value is None:
         return ()
@@ -287,7 +300,7 @@ def load_memory_cases(path: Path) -> tuple[int, tuple[MemoryCase, ...]]:
         parsed.append(
             MemoryCase(
                 id=case_id,
-                turns=_string_tuple(raw.get("turns"), field=f"{case_id}.turns"),
+                turns=_turns_tuple(raw.get("turns"), field=f"{case_id}.turns"),
                 required_memory_phrases=_string_tuple(
                     raw.get("required_memory_phrases"),
                     field=f"{case_id}.required_memory_phrases",
