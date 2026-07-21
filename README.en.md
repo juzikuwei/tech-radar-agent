@@ -20,7 +20,7 @@ This repository is also an incremental agent-engineering practice project: inste
 - **Cross-lingual retrieval**: Chinese questions can match English papers through multilingual E5 vectors, BM25 keywords, RRF fusion, and cross-encoder reranking.
 - **Long-conversation memory**: the full conversation is kept permanently in SQLite; once the working context exceeds a token threshold, the oldest turns are compacted into a structured summary, so early constraints don't slide out of a fixed window.
 - **Observable by default**: every model call and tool execution leaves a trace; the UI shows why the agent kept searching, stopped, failed, or fell back.
-- **Multiple entry points**: a React chat UI (streaming over SSE), a FastAPI HTTP API, and an authenticated read-only MCP server.
+- **Multiple entry points**: a React chat UI (answers are pushed in SSE chunks after citation validation), a FastAPI HTTP API, and an authenticated read-only MCP server.
 
 ## Quick Start
 
@@ -32,13 +32,14 @@ The current development environment is based on Windows, PowerShell, and Python 
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
+python -m pip install -r requirements-dev.txt
 
 cd frontend
 npm install
 cd ..
 ```
 
-Loading the embedding model and Cross-encoder for the first time may require downloading model files.
+Runtime and development dependencies (pytest and friends) are split between `requirements.txt` and `requirements-dev.txt`; skip the latter for a runtime-only deployment. Loading the embedding model and Cross-encoder for the first time may require downloading model files.
 
 ### 2. Configure the runtime environment
 
@@ -81,7 +82,7 @@ After installation, run the following from the repository root:
 .\start_services.ps1
 ```
 
-The script starts FastAPI and Vite and opens `http://127.0.0.1:5173`. You can also start them separately:
+The script starts FastAPI and Vite and opens `http://127.0.0.1:5173`. The services run in the background: process IDs are recorded under `.run/`, output goes to `logs/`, and `.\stop_services.ps1` stops them. You can also start them separately:
 
 ```powershell
 python -m uvicorn api.main:app --reload
@@ -274,7 +275,7 @@ Tests cover data normalization, idempotent import, retrieval, deterministic cita
 
 The entire backend suite runs offline by default: the LLM client, web search, and the embedding/reranking models are replaced with controllable fakes, so it needs no `.env` and downloads no model files. GitHub Actions CI runs all backend tests plus the frontend tests and production build with `HF_HUB_OFFLINE=1`.
 
-Quality evaluation runs separately from pytest. `smoke` and `retrieval` only load the local knowledge base and local models; `agent`, `answer`, and `memory` call the answer model configured in `.env`. Generated reports are stored in the ignored `eval/results/`:
+Quality evaluation runs separately from pytest. `smoke` and `retrieval` only load the local knowledge base and local models; `agent`, `answer`, and `memory` call the answer model configured in `.env`. Generated reports are stored in the ignored `eval/results/`, named by suite and timestamp by default; use `--output` to pick a path:
 
 ```powershell
 python -m eval.run_eval --suite smoke
@@ -308,7 +309,7 @@ The FastAPI, MCP, and command-line entry points reuse the domain capabilities in
 
 - The knowledge base currently uses only arXiv titles and abstracts, not full PDF text.
 - Data updates are triggered manually; there is no scheduled ingestion or online incremental update.
-- ReAct calls tools at most 5 times and records the token usage of each model call, but a request-level token cap is not yet in place.
+- ReAct calls tools at most 5 times; both modes record and return the request's cumulative token usage (fallback runs merge the agent's and the pipeline's consumption), but a request-level token cap is not yet in place.
 - Web search introduces an indirect prompt-injection surface; its impact is currently limited by the "never becomes answer evidence" rule, and full guardrails are still to be implemented.
 - The MCP shared token suits local development and controlled invitations; before public exposure it needs OAuth 2.1, per-user rate limiting, and an HTTPS reverse proxy.
 - Context compaction uses a conservative provider-independent token estimate rather than the model's official tokenizer, so thresholds still need calibration from real usage.
