@@ -344,6 +344,38 @@ def test_invalid_followup_decision_requests_clarification_without_retrieval(
     ]
 
 
+def test_transport_failure_during_decision_surfaces_generation_error(
+    monkeypatch: object,
+) -> None:
+    monkeypatch.setattr(
+        "rag.application.decide_conversation_action",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            LLMRequestError("provider unavailable")
+        ),
+    )
+    monkeypatch.setattr(
+        "rag.application.hybrid_search",
+        lambda *args, **kwargs: pytest.fail(
+            "a transport failure must not fall through to retrieval"
+        ),
+    )
+
+    result = run_rag(
+        "继续上一个问题",
+        top_k=5,
+        collection=object(),
+        embedder=object(),
+        reranker=FollowupReranker(),
+        settings=ModelSettings("key", "https://example.test", "model"),
+        conversation_history=HISTORY,
+    )
+
+    assert result.answer is None
+    assert result.generation_error is not None
+    assert "provider unavailable" in result.generation_error
+    assert result.retrieval_attempts == 0
+
+
 def test_followup_reuses_sufficient_evidence_without_retrieval(
     monkeypatch: object,
 ) -> None:

@@ -6,7 +6,7 @@ import json
 from typing import Any
 
 from config.model_settings import ModelSettings
-from rag.llm_client import StatusCallback, generate_text
+from rag.llm_client import StatusCallback, UsageCallback, generate_text
 from rag.search import SearchResult
 
 
@@ -133,6 +133,7 @@ def judge_retrieval(
     settings: ModelSettings,
     client: Any | None = None,
     on_retry: StatusCallback | None = None,
+    on_usage: UsageCallback | None = None,
 ) -> RetrievalDecision:
     """Ask the configured DeepSeek-compatible model for one retrieval decision."""
     messages = build_judge_messages(question, papers)
@@ -144,6 +145,7 @@ def judge_retrieval(
         response_format={"type": "json_object"},
         max_tokens=300,
         temperature=0.0,
+        on_usage=on_usage,
     )
     decision = parse_retrieval_decision(content)
     if (

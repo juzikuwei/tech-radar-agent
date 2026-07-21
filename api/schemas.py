@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 DEFAULT_TOP_K = 5
 MAX_TOP_K = 10
+MAX_QUESTION_CHARS = 8_000
 
 
 class ChatRequest(BaseModel):
@@ -14,7 +15,7 @@ class ChatRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    question: str = Field(min_length=1)
+    question: str = Field(min_length=1, max_length=MAX_QUESTION_CHARS)
     top_k: int = Field(default=DEFAULT_TOP_K, ge=1, le=MAX_TOP_K)
     mode: Literal["pipeline", "react"] = "pipeline"
 

@@ -108,6 +108,36 @@ def test_empty_model_response_is_not_retried() -> None:
     assert client.completions_spy.calls == 1
 
 
+def test_generate_text_reports_usage_to_the_callback() -> None:
+    response = SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content="answer"))],
+        usage=SimpleNamespace(
+            prompt_tokens=11,
+            completion_tokens=7,
+            total_tokens=18,
+        ),
+    )
+
+    class UsageCompletions:
+        def create(self, **options: object) -> object:
+            return response
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=UsageCompletions()))
+    usages: list[ModelUsage] = []
+
+    result = generate_text(
+        MESSAGES,
+        settings=SETTINGS,
+        client=client,
+        on_usage=usages.append,
+    )
+
+    assert result == "answer"
+    assert usages == [
+        ModelUsage(prompt_tokens=11, completion_tokens=7, total_tokens=18)
+    ]
+
+
 def test_optional_generation_controls_are_forwarded() -> None:
     client = make_client(["answer"])
 

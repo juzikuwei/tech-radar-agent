@@ -26,19 +26,32 @@ ValidationReason = Literal[
 
 _BRACKET_GROUP_PATTERN = re.compile(r"\[([^\]]+)\]")
 _CITATION_SEPARATOR_PATTERN = re.compile(r"[,，;；\s]+")
+# Old-style identifiers are restricted to real arXiv archives so URL fragments
+# such as "github.com/1234567" are never treated as citations.
+_OLD_STYLE_ARCHIVES = (
+    "astro-ph|cond-mat|cs|econ|eess|gr-qc|hep-ex|hep-lat|hep-ph|hep-th|"
+    "math-ph|math|nlin|nucl-ex|nucl-th|physics|q-bio|q-fin|quant-ph|stat"
+)
+# The trailing guard permits a sentence-ending period ("... 2401.99999.") while
+# still rejecting ambiguous numeric continuations ("2401.1234.5").
 _ARXIV_ID_PATTERN = re.compile(
     r"(?<![\d.])"
     r"(?:\d{2}(?:0[1-9]|1[0-2])\.\d{4,5}"
-    r"|[A-Za-z][A-Za-z0-9.-]*/\d{7})"
+    rf"|(?:{_OLD_STYLE_ARCHIVES})(?:\.[A-Za-z-]+)?/\d{{7}})"
     r"(?:v\d+)?"
-    r"(?![\d.])",
+    r"(?!\d)(?!\.\d)",
     flags=re.IGNORECASE,
 )
+_VERSION_SUFFIX_PATTERN = re.compile(r"v\d+$", flags=re.IGNORECASE)
+_CONVERSATION_CORE = (
+    r"(?:你好|您好|嗨|hello|hi|谢谢|感谢|多谢|辛苦了|辛苦|做得好|不错|"
+    r"好的|好|嗯|行|明白了|明白|知道了|知道|收到|再见|拜拜|你是谁|"
+    r"你能做什么|介绍一下你自己|不用了|没事|没问题)"
+)
+_CONVERSATION_SUFFIX = r"(?:你|您|啦|哈|呀|哟|喔|哦|了|啊)*"
 _DIRECT_CONVERSATION_PATTERNS = (
     re.compile(
-        r"^(?:你好|您好|嗨|hello|hi|谢谢|感谢|多谢|辛苦了|做得好|不错|"
-        r"好的|好|明白了|知道了|收到|再见|你是谁|你能做什么|"
-        r"介绍一下你自己)[！!。.，,？?\s]*$",
+        rf"^(?:{_CONVERSATION_CORE}{_CONVERSATION_SUFFIX}[！!。.，,？?\s]*)+$",
         flags=re.IGNORECASE,
     ),
     re.compile(
@@ -61,6 +74,8 @@ class AnswerValidation:
 def validate_research_answer(
     answer: str,
     evidence: Sequence[SearchResult],
+    *,
+    question: str = "",
 ) -> AnswerValidation:
     """Require at least one valid citation and reject every unknown arXiv ID."""
     if not answer.strip():
@@ -71,17 +86,24 @@ def validate_research_answer(
 
     for group in _BRACKET_GROUP_PATTERN.findall(answer):
         for token in _CITATION_SEPARATOR_PATTERN.split(group.strip()):
-            clean_token = token.strip()
+            clean_token = _normalize_arxiv_id(token.strip())
             if not clean_token:
                 continue
             if clean_token in evidence_by_id:
                 cited_ids.append(clean_token)
 
-    unknown_ids = [
-        match.group(0)
-        for match in _ARXIV_ID_PATTERN.finditer(answer)
-        if match.group(0) not in evidence_by_id
-    ]
+    # IDs the user typed themselves cannot be model fabrications, so restating
+    # them (for example "the local library does not contain 2503.99999") must
+    # not turn a correct refusal into a citation-validation rejection.
+    question_ids = {
+        _normalize_arxiv_id(match.group(0))
+        for match in _ARXIV_ID_PATTERN.finditer(question)
+    }
+    unknown_ids = []
+    for match in _ARXIV_ID_PATTERN.finditer(answer):
+        normalized = _normalize_arxiv_id(match.group(0))
+        if normalized not in evidence_by_id and normalized not in question_ids:
+            unknown_ids.append(normalized)
 
     unique_cited_ids = tuple(dict.fromkeys(cited_ids))
     unique_unknown_ids = tuple(dict.fromkeys(unknown_ids))
@@ -95,6 +117,11 @@ def validate_research_answer(
     if not unique_cited_ids:
         return AnswerValidation(False, (), (), "missing_citation")
     return AnswerValidation(True, unique_cited_ids, (), "valid")
+
+
+def _normalize_arxiv_id(token: str) -> str:
+    """Drop a trailing version suffix so IDs match versionless stored IDs."""
+    return _VERSION_SUFFIX_PATTERN.sub("", token)
 
 
 def select_cited_papers(

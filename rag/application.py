@@ -31,7 +31,13 @@ from rag.execution_trace import (
 )
 from rag.hybrid_search import hybrid_search
 from rag.keyword_search import DEFAULT_DATABASE_PATH
-from rag.llm_client import LLMRequestError, ModelUsage, StatusCallback, generate_text
+from rag.llm_client import (
+    LLMRequestError,
+    ModelUsage,
+    StatusCallback,
+    UsageCallback,
+    generate_text,
+)
 from rag.prompt_builder import build_rag_messages
 from rag.reranker import Reranker
 from rag.retrieval_judge import (
@@ -71,6 +77,7 @@ def answer_from_results(
     conversation_history: tuple[ConversationTurn, ...] = (),
     context_summary: str | None = None,
     standalone_question: str | None = None,
+    on_usage: UsageCallback | None = None,
 ) -> str:
     """Generate a display-ready answer from already retrieved papers."""
     messages = build_rag_messages(
@@ -85,6 +92,7 @@ def answer_from_results(
         settings=settings,
         client=client,
         on_retry=on_retry,
+        on_usage=on_usage,
     )
 
 
@@ -119,6 +127,18 @@ def run_rag(
     retrieval_decision: RetrievalDecision | None = None
     retrieval_decision_error: str | None = None
     should_judge_retrieval = True
+    usage_events: list[ModelUsage] = []
+
+    def record_usage(usage: ModelUsage) -> None:
+        usage_events.append(usage)
+
+    def total_usage() -> ModelUsage | None:
+        if not usage_events:
+            return None
+        total = ModelUsage()
+        for usage in usage_events:
+            total = total + usage
+        return total
 
     if (history or context_summary) and reranker is not None:
         started_at = start_timer()
@@ -131,6 +151,7 @@ def run_rag(
                 settings=settings,
                 client=client,
                 on_retry=on_retry,
+                on_usage=record_usage,
             )
             standalone_question = conversation_decision.standalone_question
             trace.record(
@@ -157,15 +178,19 @@ def run_rag(
                 conversation_decision.reusable_arxiv_ids,
             )
             if conversation_decision.next_action == "respond":
-                return _generate_conversation_response(
-                    clean_question,
-                    history=history,
-                    settings=settings,
-                    client=client,
-                    on_retry=on_retry,
-                    trace=trace,
-                    conversation_decision=conversation_decision,
-                    context_summary=context_summary,
+                return replace(
+                    _generate_conversation_response(
+                        clean_question,
+                        history=history,
+                        settings=settings,
+                        client=client,
+                        on_retry=on_retry,
+                        on_usage=record_usage,
+                        trace=trace,
+                        conversation_decision=conversation_decision,
+                        context_summary=context_summary,
+                    ),
+                    usage=total_usage(),
                 )
             if conversation_decision.next_action == "answer_from_existing":
                 results = _rerank_existing_evidence(
@@ -208,7 +233,30 @@ def run_rag(
                     retrieval_round=1,
                 )
                 retrieval_attempts = 1
-        except (LLMRequestError, ConversationDecisionError) as error:
+        except LLMRequestError as error:
+            # A transport-level failure is an infrastructure problem, not an
+            # ambiguous user message: surface it as a generation error (which
+            # is never persisted) instead of asking the user to rephrase.
+            conversation_decision_error = str(error)
+            trace.record(
+                stage="conversation_evidence_decision",
+                label="DeepSeek 对话证据动作判断",
+                status="failed",
+                started_at=started_at,
+                details={"error": conversation_decision_error},
+            )
+            return RagResult(
+                question=clean_question,
+                papers=(),
+                answer=None,
+                generation_error=conversation_decision_error,
+                retrieval_attempts=0,
+                standalone_question=clean_question,
+                conversation_decision_error=conversation_decision_error,
+                trace=trace.events,
+                usage=total_usage(),
+            )
+        except ConversationDecisionError as error:
             conversation_decision_error = str(error)
             trace.record(
                 stage="conversation_evidence_decision",
@@ -232,6 +280,7 @@ def run_rag(
                 conversation_decision_error=conversation_decision_error,
                 trace=trace.events,
                 response_kind="conversation",
+                usage=total_usage(),
             )
     else:
         results = _run_retrieval(
@@ -263,6 +312,7 @@ def run_rag(
             conversation_decision=conversation_decision,
             conversation_decision_error=conversation_decision_error,
             trace=trace.events,
+            usage=total_usage(),
         )
 
     if reranker is not None and should_judge_retrieval:
@@ -274,6 +324,7 @@ def run_rag(
                 settings=settings,
                 client=client,
                 on_retry=on_retry,
+                on_usage=record_usage,
             )
             trace.record(
                 stage="retrieval_judgment",
@@ -329,6 +380,7 @@ def run_rag(
             conversation_history=history,
             context_summary=context_summary,
             standalone_question=standalone_question,
+            on_usage=record_usage,
         )
     except LLMRequestError as error:
         trace.record(
@@ -350,6 +402,7 @@ def run_rag(
             retrieval_decision=retrieval_decision,
             retrieval_decision_error=retrieval_decision_error,
             trace=trace.events,
+            usage=total_usage(),
         )
 
     trace.record(
@@ -362,7 +415,7 @@ def run_rag(
         },
     )
 
-    validation = validate_research_answer(answer, results)
+    validation = validate_research_answer(answer, results, question=clean_question)
     if not validation.is_valid:
         trace.record(
             stage="answer_validation",
@@ -385,6 +438,7 @@ def run_rag(
             retrieval_decision=retrieval_decision,
             retrieval_decision_error=retrieval_decision_error,
             trace=trace.events,
+            usage=total_usage(),
         )
 
     cited_papers = select_cited_papers(validation, results)
@@ -406,6 +460,7 @@ def run_rag(
         retrieval_decision=retrieval_decision,
         retrieval_decision_error=retrieval_decision_error,
         trace=trace.events,
+        usage=total_usage(),
     )
 
 
@@ -419,6 +474,7 @@ def _generate_conversation_response(
     trace: TraceRecorder,
     conversation_decision: ConversationDecision,
     context_summary: str | None,
+    on_usage: UsageCallback | None = None,
 ) -> RagResult:
     """Generate one no-tool response without introducing research claims."""
     started_at = start_timer()
@@ -430,6 +486,7 @@ def _generate_conversation_response(
             settings=settings,
             client=client,
             on_retry=on_retry,
+            on_usage=on_usage,
         )
     except LLMRequestError as error:
         trace.record(

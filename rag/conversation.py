@@ -6,7 +6,7 @@ import json
 from typing import Any, Literal
 
 from config.model_settings import ModelSettings
-from rag.llm_client import StatusCallback, generate_text
+from rag.llm_client import StatusCallback, UsageCallback, generate_text
 from rag.search import SearchResult
 
 
@@ -295,6 +295,7 @@ def decide_conversation_action(
     settings: ModelSettings,
     client: Any | None = None,
     on_retry: StatusCallback | None = None,
+    on_usage: UsageCallback | None = None,
 ) -> ConversationDecision:
     """Ask DeepSeek whether to respond, reuse, supplement, or replace evidence."""
     messages = build_conversation_decision_messages(
@@ -313,6 +314,7 @@ def decide_conversation_action(
             response_format={"type": "json_object"},
             max_tokens=500,
             temperature=0.0,
+            on_usage=on_usage,
         )
         try:
             decision = parse_conversation_decision(content)
@@ -385,6 +387,7 @@ def generate_conversational_response(
     settings: ModelSettings,
     client: Any | None = None,
     on_retry: StatusCallback | None = None,
+    on_usage: UsageCallback | None = None,
 ) -> str:
     """Generate one response that must not introduce new research claims."""
     return generate_text(
@@ -398,4 +401,5 @@ def generate_conversational_response(
         on_retry=on_retry,
         max_tokens=600,
         temperature=0.0,
+        on_usage=on_usage,
     )

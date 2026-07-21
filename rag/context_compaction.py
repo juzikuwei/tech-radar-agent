@@ -60,6 +60,11 @@ class ConversationCompactionError(RuntimeError):
     """Raised when context must be compacted but no valid summary is produced."""
 
 
+class CurrentMessageTooLargeError(ConversationCompactionError):
+    """The new user message alone exceeds the context budget; no amount of
+    history compaction can help, so the caller should reject the request."""
+
+
 @dataclass(frozen=True)
 class CompactionResult:
     """Prepared context and optional metadata for one completed compaction."""
@@ -98,6 +103,10 @@ def prepare_conversation_context(
         )
 
     current_message_tokens = estimate_text_tokens(current_message)
+    if current_message_tokens > settings.token_threshold:
+        raise CurrentMessageTooLargeError(
+            "The current message alone exceeds the conversation context budget"
+        )
     target_history_tokens = max(
         0,
         settings.target_tokens - current_message_tokens,

@@ -5,6 +5,7 @@ from pathlib import Path
 import sqlite3
 
 from ingestion.repository import SnapshotImportError, import_jsonl_snapshot
+from rag.keyword_search import ensure_keyword_index
 
 
 DEFAULT_DATABASE_PATH = Path("data/tech_radar.db")
@@ -24,6 +25,7 @@ def main() -> int:
 
     try:
         stats = import_jsonl_snapshot(args.snapshot, args.database)
+        index_stats = ensure_keyword_index(args.database)
     except (OSError, sqlite3.Error, SnapshotImportError) as exc:
         print(f"Import failed: {exc}")
         return 1
@@ -32,6 +34,7 @@ def main() -> int:
     print(f"Updated: {stats.updated}")
     print(f"Unchanged: {stats.unchanged}")
     print(f"Skipped older: {stats.skipped_older}")
+    print(f"Keyword index size: {index_stats.indexed_count}")
     print(f"Database: {args.database}")
     return 0
 

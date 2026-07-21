@@ -66,6 +66,11 @@ class AgentMessage:
 
 StatusCallback = Callable[[RetryNotice], None]
 AssistantDeltaCallback = Callable[[str], None]
+UsageCallback = Callable[[ModelUsage], None]
+
+# Explicit request timeout so a stalled provider cannot hold an SSE stream
+# open for the SDK default of ten minutes.
+REQUEST_TIMEOUT_SECONDS = 120.0
 
 
 class LLMRequestError(RuntimeError):
@@ -85,6 +90,7 @@ def create_client(settings: ModelSettings) -> OpenAI:
         api_key=settings.api_key,
         base_url=settings.base_url,
         max_retries=0,
+        timeout=REQUEST_TIMEOUT_SECONDS,
     )
 
 
@@ -100,6 +106,7 @@ def generate_text(
     response_format: dict[str, str] | None = None,
     max_tokens: int | None = None,
     temperature: float | None = None,
+    on_usage: UsageCallback | None = None,
 ) -> str:
     """Generate text, retrying only temporary connection or service failures."""
     if not messages:
@@ -132,6 +139,9 @@ def generate_text(
             content = response.choices[0].message.content
             if not content or not content.strip():
                 raise LLMRequestError("Model returned an empty response")
+            usage = _model_usage(getattr(response, "usage", None))
+            if usage is not None and on_usage is not None:
+                on_usage(usage)
             return content.strip()
         except AuthenticationError as error:
             raise LLMRequestError(

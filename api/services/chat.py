@@ -4,7 +4,7 @@ import json
 import logging
 from dataclasses import replace
 from pathlib import Path
-from queue import Queue
+from queue import Empty, Queue
 from threading import Thread
 from time import perf_counter, sleep
 from collections.abc import Callable, Iterator
@@ -33,6 +33,7 @@ from rag.conversation_store import (
 )
 from rag.context_compaction import (
     ConversationCompactionError,
+    CurrentMessageTooLargeError,
     prepare_conversation_context,
 )
 from rag.execution_trace import TraceEvent, TraceEventCallback
@@ -46,6 +47,7 @@ from rag.research_agent import ResearchAgentError, run_research_agent
 LOGGER = logging.getLogger(__name__)
 ANSWER_STREAM_CHUNK_CHARS = 32
 ANSWER_STREAM_INTERVAL_SECONDS = 0.02
+HEARTBEAT_INTERVAL_SECONDS = 15.0
 StreamItem: TypeAlias = (
     tuple[Literal["trace"], TraceEvent]
     | tuple[Literal["status"], str]
@@ -74,6 +76,8 @@ def execute_chat(
         raise HTTPException(status_code=422, detail="question must not be empty")
 
     compaction_started_at = perf_counter()
+    if on_status is not None:
+        on_status("正在准备会话上下文…")
     try:
         compaction = prepare_conversation_context(
             runtime.database_path,
@@ -86,6 +90,11 @@ def execute_chat(
         raise HTTPException(
             status_code=404,
             detail="conversation not found",
+        ) from error
+    except CurrentMessageTooLargeError as error:
+        raise HTTPException(
+            status_code=422,
+            detail="当前消息过长，超出单条消息的上下文预算；请拆分或精简后重试。",
         ) from error
     except (ConversationCompactionError, LLMRequestError) as error:
         failed_event = TraceEvent(
@@ -151,11 +160,17 @@ def execute_chat(
                 web_search_client=runtime.web_search_client,
             )
         except Exception as error:
-            LOGGER.warning("Research Agent failed: %s", error)
+            if isinstance(error, ResearchAgentError):
+                LOGGER.warning("Research Agent failed: %s", error)
+                research_trace = error.trace
+                research_usage = error.usage
+            else:
+                # An unexpected exception is a code defect, not an agent
+                # failure: keep the fallback but preserve the stack trace.
+                LOGGER.exception("Research Agent failed unexpectedly")
+                research_trace = ()
+                research_usage = None
             fallback_used = True
-            research_trace = (
-                error.trace if isinstance(error, ResearchAgentError) else ()
-            )
             fallback_event = TraceEvent(
                 stage="react_fallback",
                 label="研究 Agent 降级到可靠管线",
@@ -178,6 +193,13 @@ def execute_chat(
                 active_evidence=active_evidence,
                 on_trace=on_trace,
             )
+            merged_usage = fallback_result.usage
+            if research_usage is not None:
+                merged_usage = (
+                    research_usage + merged_usage
+                    if merged_usage is not None
+                    else research_usage
+                )
             result = replace(
                 fallback_result,
                 trace=(
@@ -185,6 +207,7 @@ def execute_chat(
                     fallback_event,
                     *fallback_result.trace,
                 ),
+                usage=merged_usage,
             )
     else:
         result = run_rag(
@@ -217,8 +240,12 @@ def execute_chat(
                 paper_ids=tuple(paper.arxiv_id for paper in response.papers),
                 response_kind=response.response_kind,
                 active_evidence_ids=(
+                    # Conversation turns and research refusals (empty papers)
+                    # both keep the previous turn's active evidence: a failed
+                    # validation must not wipe the conversation's memory.
                     None
                     if response.response_kind == "conversation"
+                    or not response.papers
                     else tuple(
                         paper.arxiv_id for paper in response.papers[:5]
                     )
@@ -295,7 +322,14 @@ def stream_chat(
     )
 
     while True:
-        item = items.get()
+        try:
+            item = items.get(timeout=HEARTBEAT_INTERVAL_SECONDS)
+        except Empty:
+            # SSE comment line: keeps proxies and browsers from dropping the
+            # connection during long silent phases such as context compaction
+            # or a slow model call. Clients ignore comment lines per the spec.
+            yield ": ping\n\n"
+            continue
         if item is None:
             return
         item_type, value = item

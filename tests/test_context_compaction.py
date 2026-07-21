@@ -7,6 +7,7 @@ from config.conversation_context_settings import ConversationContextSettings
 from config.model_settings import ModelSettings
 from rag.context_compaction import (
     ConversationCompactionError,
+    CurrentMessageTooLargeError,
     estimate_context_tokens,
     parse_compaction_summary,
     prepare_conversation_context,
@@ -84,6 +85,31 @@ def test_skips_compaction_below_token_threshold(
 
     assert not result.compacted
     assert len(result.state.uncompacted_turns) == 1
+
+
+def test_rejects_a_current_message_that_alone_exceeds_the_budget(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path, conversation_id = make_store(tmp_path)
+    monkeypatch.setattr(
+        "rag.context_compaction.generate_text",
+        lambda *args, **kwargs: pytest.fail(
+            "an oversized message must be rejected before any model call"
+        ),
+    )
+
+    with pytest.raises(CurrentMessageTooLargeError):
+        prepare_conversation_context(
+            database_path,
+            conversation_id,
+            current_message="问" * 2_000,
+            settings=ConversationContextSettings(
+                token_threshold=1_000,
+                target_tokens=500,
+            ),
+            model_settings=MODEL_SETTINGS,
+        )
 
 
 def test_compacts_oldest_batch_and_preserves_all_raw_messages(

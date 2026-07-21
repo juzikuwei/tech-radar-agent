@@ -1,14 +1,20 @@
 """SQLite FTS5 keyword retrieval over normalized paper titles and abstracts."""
 
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 import re
 import sqlite3
 
 from rag.search import SearchResult
+from rag.sqlite_utils import enable_wal_mode, open_connection
 
 
-DEFAULT_DATABASE_PATH = Path("data/tech_radar.db")
+# Anchored to the repository root so services started from another working
+# directory never silently create a second, empty database.
+DEFAULT_DATABASE_PATH = (
+    Path(__file__).resolve().parents[1] / "data" / "tech_radar.db"
+)
 TITLE_WEIGHT = 4.0
 ABSTRACT_WEIGHT = 1.0
 
@@ -59,7 +65,8 @@ def ensure_keyword_index(
     if not database_path.exists():
         raise FileNotFoundError(f"database not found: {database_path}")
 
-    with sqlite3.connect(database_path) as connection:
+    with closing(open_connection(database_path)) as connection, connection:
+        enable_wal_mode(connection)
         table_existed = connection.execute(
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'papers_fts'"
         ).fetchone() is not None
@@ -105,22 +112,17 @@ def search_keyword_papers(
     if not match_query:
         return []
 
-    ensure_keyword_index(database_path)
-    with sqlite3.connect(database_path) as connection:
-        connection.row_factory = sqlite3.Row
-        rows = connection.execute(
-            """
-            SELECT p.arxiv_id, p.title, p.abstract, p.entry_url,
-                   p.primary_category,
-                   bm25(papers_fts, ?, ?) AS bm25_score
-            FROM papers_fts
-            JOIN papers AS p ON p.rowid = papers_fts.rowid
-            WHERE papers_fts MATCH ?
-            ORDER BY bm25_score ASC, p.arxiv_id ASC
-            LIMIT ?
-            """,
-            (TITLE_WEIGHT, ABSTRACT_WEIGHT, match_query, top_k),
-        ).fetchall()
+    # Index maintenance is intentionally not part of this hot path: the API
+    # runtime ensures the FTS index at startup and ingestion keeps it in sync
+    # via triggers. The lazy retry below only covers a database that has never
+    # been indexed at all.
+    try:
+        rows = _query_keyword_rows(match_query, top_k, database_path)
+    except sqlite3.OperationalError as error:
+        if "no such table" not in str(error).lower():
+            raise
+        ensure_keyword_index(database_path)
+        rows = _query_keyword_rows(match_query, top_k, database_path)
 
     return [
         SearchResult(
@@ -134,6 +136,28 @@ def search_keyword_papers(
         )
         for row in rows
     ]
+
+
+def _query_keyword_rows(
+    match_query: str,
+    top_k: int,
+    database_path: Path,
+) -> list[sqlite3.Row]:
+    with closing(open_connection(database_path)) as connection, connection:
+        connection.row_factory = sqlite3.Row
+        return connection.execute(
+            """
+            SELECT p.arxiv_id, p.title, p.abstract, p.entry_url,
+                   p.primary_category,
+                   bm25(papers_fts, ?, ?) AS bm25_score
+            FROM papers_fts
+            JOIN papers AS p ON p.rowid = papers_fts.rowid
+            WHERE papers_fts MATCH ?
+            ORDER BY bm25_score ASC, p.arxiv_id ASC
+            LIMIT ?
+            """,
+            (TITLE_WEIGHT, ABSTRACT_WEIGHT, match_query, top_k),
+        ).fetchall()
 
 
 def build_match_query(query: str) -> str:

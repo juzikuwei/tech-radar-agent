@@ -1,5 +1,6 @@
 """SQLite persistence for conversations and completed turns."""
 
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
@@ -12,6 +13,7 @@ from rag.conversation import (
     ConversationTurn,
     MAX_ACTIVE_EVIDENCE,
 )
+from rag.sqlite_utils import enable_wal_mode, open_connection
 
 
 DEFAULT_CONVERSATION_TITLE = "新对话"
@@ -93,7 +95,8 @@ class ConversationState:
 def initialize_conversation_store(database_path: Path) -> None:
     """Create conversation tables in the existing SQLite database."""
     database_path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(database_path) as connection:
+    with closing(open_connection(database_path)) as connection, connection:
+        enable_wal_mode(connection)
         connection.executescript(SCHEMA_SQL)
         _migrate_conversation_schema(connection)
         connection.commit()
@@ -103,7 +106,7 @@ def create_conversation(database_path: Path) -> ConversationSummary:
     """Create an empty conversation with a stable UUID."""
     conversation_id = str(uuid4())
     created_at = _utc_now()
-    with sqlite3.connect(database_path) as connection:
+    with closing(open_connection(database_path)) as connection, connection:
         connection.execute(
             """
             INSERT INTO conversations (
@@ -134,7 +137,7 @@ def create_conversation(database_path: Path) -> ConversationSummary:
 
 def list_conversations(database_path: Path) -> list[ConversationSummary]:
     """List conversations from most recently updated to least recent."""
-    with sqlite3.connect(database_path) as connection:
+    with closing(open_connection(database_path)) as connection, connection:
         connection.row_factory = sqlite3.Row
         rows = connection.execute(
             """
@@ -157,7 +160,7 @@ def get_conversation(
     conversation_id: str,
 ) -> StoredConversation:
     """Load one conversation and every persisted turn in display order."""
-    with sqlite3.connect(database_path) as connection:
+    with closing(open_connection(database_path)) as connection, connection:
         connection.row_factory = sqlite3.Row
         summary_row = connection.execute(
             """
@@ -195,7 +198,7 @@ def load_conversation_state(
     conversation_id: str,
 ) -> ConversationState:
     """Load the rolling summary, pending raw turns, and latest evidence."""
-    with sqlite3.connect(database_path) as connection:
+    with closing(open_connection(database_path)) as connection, connection:
         connection.row_factory = sqlite3.Row
         connection.execute("BEGIN")
         summary_row = connection.execute(
@@ -270,7 +273,7 @@ def save_conversation_compaction(
         raise ValueError("context_summary must not be blank")
     if compacted_through_turn_id <= expected_previous_turn_id:
         raise ValueError("compacted_through_turn_id must advance")
-    with sqlite3.connect(database_path) as connection:
+    with closing(open_connection(database_path)) as connection, connection:
         connection.execute("BEGIN IMMEDIATE")
         cursor = connection.execute(
             """
@@ -312,9 +315,12 @@ def append_conversation_turn(
     clean_assistant_message = assistant_message.strip()
     clean_paper_ids = tuple(dict.fromkeys(paper_id.strip() for paper_id in paper_ids))
     if active_evidence_ids is None:
+        # Derive from paper_ids only when the turn actually produced papers:
+        # a research refusal (no papers) must preserve, not clear, the
+        # conversation's previously accumulated active evidence.
         clean_active_evidence_ids = (
             clean_paper_ids[:MAX_ACTIVE_EVIDENCE]
-            if response_kind == "research"
+            if response_kind == "research" and clean_paper_ids
             else None
         )
     else:
@@ -335,7 +341,7 @@ def append_conversation_turn(
         raise ValueError("response_kind is invalid")
 
     created_at = _utc_now()
-    with sqlite3.connect(database_path) as connection:
+    with closing(open_connection(database_path)) as connection, connection:
         connection.row_factory = sqlite3.Row
         connection.execute("BEGIN IMMEDIATE")
         conversation = connection.execute(
@@ -407,7 +413,7 @@ def append_conversation_turn(
 
 def delete_conversation(database_path: Path, conversation_id: str) -> None:
     """Delete a conversation and its turns in one explicit transaction."""
-    with sqlite3.connect(database_path) as connection:
+    with closing(open_connection(database_path)) as connection, connection:
         connection.execute("BEGIN IMMEDIATE")
         exists = connection.execute(
             "SELECT 1 FROM conversations WHERE conversation_id = ?",

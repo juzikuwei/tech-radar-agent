@@ -128,10 +128,12 @@ class ResearchAgentError(RuntimeError):
         trace: tuple[TraceEvent, ...],
         *,
         tool_calls: int = 0,
+        usage: ModelUsage | None = None,
     ) -> None:
         super().__init__(message)
         self.trace = trace
         self.tool_calls = tool_calls
+        self.usage = usage
 
 
 def run_research_agent(
@@ -251,6 +253,7 @@ def run_research_agent(
                 str(error),
                 trace.events,
                 tool_calls=tool_call_count,
+                usage=total_usage if has_usage else None,
             ) from error
 
         if assistant.usage is not None:
@@ -277,6 +280,7 @@ def run_research_agent(
                     "Model returned no final answer",
                     trace.events,
                     tool_calls=tool_call_count,
+                    usage=total_usage if has_usage else None,
                 )
             evidence = tuple(evidence_by_id.values())
             if search_count == 0 and is_direct_conversation_message(clean_question):
@@ -293,7 +297,11 @@ def run_research_agent(
                     details={"reason": "no_evidence"},
                 )
             else:
-                validation = validate_research_answer(answer, evidence)
+                validation = validate_research_answer(
+                    answer,
+                    evidence,
+                    question=clean_question,
+                )
                 if validation.is_valid:
                     final_papers = select_cited_papers(validation, evidence)
                     response_kind = "research"
@@ -323,7 +331,7 @@ def run_research_agent(
             if on_assistant_delta is not None:
                 on_assistant_delta(answer)
             if on_assistant_completed is not None:
-                on_assistant_completed(answer, assistant.usage)
+                on_assistant_completed(answer, final_usage)
             _emit_status(on_status, "回答生成完成。")
             return RagResult(
                 question=clean_question,
@@ -342,6 +350,7 @@ def run_research_agent(
                 "Model requested a tool after the tool budget was exhausted",
                 trace.events,
                 tool_calls=tool_call_count,
+                usage=total_usage if has_usage else None,
             )
 
         for call_index, call in enumerate(assistant.tool_calls):
@@ -364,20 +373,6 @@ def run_research_agent(
                     },
                 )
                 messages.append(_tool_message(call, payload))
-                continue
-            if tool_call_count >= max_tool_calls:
-                messages.append(
-                    _tool_message(
-                        call,
-                        {
-                            "ok": False,
-                            "error": "tool call budget exhausted",
-                            "error_type": "budget",
-                            "retryable": False,
-                            "tool_available": False,
-                        },
-                    )
-                )
                 continue
             tool_call_count += 1
             if call.name not in available_tool_names:
@@ -422,9 +417,9 @@ def run_research_agent(
                     messages.append(_tool_message(call, papers))
             elif call.name == "web_search":
                 query = _string_argument(call, "query")
-                requested_count = (
-                    _integer_argument(call, "max_results") or MAX_WEB_RESULTS
-                )
+                requested_count = _integer_argument(call, "max_results")
+                if requested_count is None:
+                    requested_count = MAX_WEB_RESULTS
                 if not query:
                     payload = _invalid_tool_arguments(
                         call,

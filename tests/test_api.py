@@ -20,6 +20,7 @@ from rag.conversation_store import (
     load_conversation_state,
 )
 from rag.execution_trace import TraceEvent
+from rag.llm_client import ModelUsage
 from rag.research_agent import ResearchAgentError
 from rag.runtime import RagRuntime
 
@@ -320,14 +321,15 @@ def test_chat_stream_emits_trace_then_persists_complete_result(
     events = parse_sse_events(response.text)
     assert [event["type"] for event in events] == [
         "run_started",
+        "status",
         "trace",
         "assistant_delta",
         "assistant_completed",
         "run_completed",
         "result",
     ]
-    assert events[1]["event"]["stage"] == "dense_retrieval"
-    assert events[2]["delta"] == "complete answer"
+    assert events[2]["event"]["stage"] == "dense_retrieval"
+    assert events[3]["delta"] == "complete answer"
     assert events[-1]["result"]["answer"] == "complete answer"
     assert stored.json()["turn_count"] == 1
     assert response.headers["x-accel-buffering"] == "no"
@@ -433,7 +435,15 @@ def test_react_initial_model_failure_falls_back_to_reliable_pipeline(
         chat_service,
         "run_research_agent",
         lambda *args, **kwargs: (_ for _ in ()).throw(
-            ResearchAgentError("invalid plan", (failed_event,))
+            ResearchAgentError(
+                "invalid plan",
+                (failed_event,),
+                usage=ModelUsage(
+                    prompt_tokens=100,
+                    completion_tokens=20,
+                    total_tokens=120,
+                ),
+            )
         ),
     )
     monkeypatch.setattr(
@@ -445,6 +455,11 @@ def test_react_initial_model_failure_falls_back_to_reliable_pipeline(
             answer="pipeline fallback",
             generation_error=None,
             trace=(),
+            usage=ModelUsage(
+                prompt_tokens=50,
+                completion_tokens=10,
+                total_tokens=60,
+            ),
         ),
     )
     app = create_app(lambda: runtime)
@@ -463,6 +478,11 @@ def test_react_initial_model_failure_falls_back_to_reliable_pipeline(
         "agent_decision",
         "react_fallback",
     ]
+    assert body["usage"] == {
+        "prompt_tokens": 150,
+        "completion_tokens": 30,
+        "total_tokens": 180,
+    }
 
 
 def test_react_tool_failure_still_falls_back_to_reliable_pipeline(
@@ -694,3 +714,56 @@ def test_direct_response_is_stored_without_clearing_active_evidence(
     assert stored.json()["turns"][-1]["response_kind"] == "conversation"
     assert stored.json()["turns"][-1]["paper_ids"] == []
     assert state.active_evidence_ids == ("2607.00001",)
+
+
+def test_research_refusal_is_stored_without_clearing_active_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = make_database(tmp_path)
+    runtime = make_runtime(database_path)
+    conversation = create_conversation(database_path)
+    append_conversation_turn(
+        database_path,
+        conversation.conversation_id,
+        user_message="research question",
+        assistant_message="research answer",
+        paper_ids=("2607.00001",),
+    )
+    monkeypatch.setattr(
+        chat_service,
+        "run_rag",
+        lambda question, **kwargs: RagResult(
+            question=question,
+            papers=(),
+            answer=SAFE_INSUFFICIENT_EVIDENCE_RESPONSE,
+            generation_error=None,
+            trace=(),
+            response_kind="research",
+        ),
+    )
+    app = create_app(lambda: runtime)
+
+    with TestClient(app) as client:
+        response = client.post(
+            f"/conversations/{conversation.conversation_id}/chat",
+            json={"question": "库外问题"},
+        )
+
+    state = load_conversation_state(database_path, conversation.conversation_id)
+    assert response.json()["answer"] == SAFE_INSUFFICIENT_EVIDENCE_RESPONSE
+    assert state.active_evidence_ids == ("2607.00001",)
+
+
+def test_chat_rejects_an_oversized_question(tmp_path: Path) -> None:
+    runtime = make_runtime(make_database(tmp_path))
+    app = create_app(lambda: runtime)
+
+    with TestClient(app) as client:
+        conversation_id = create_client_conversation(client)
+        response = client.post(
+            f"/conversations/{conversation_id}/chat",
+            json={"question": "问" * 8_001},
+        )
+
+    assert response.status_code == 422
