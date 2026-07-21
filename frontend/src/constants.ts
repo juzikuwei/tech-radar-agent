@@ -1,3 +1,5 @@
+export const DEFAULT_TOP_K = 5;
+
 export const SUGGESTIONS = [
   "Agentic RAG 和普通 RAG 有什么区别？",
   "多 Agent 系统执行失败后，如何定位最早出错步骤？",

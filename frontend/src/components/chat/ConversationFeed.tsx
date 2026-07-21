@@ -16,6 +16,7 @@ import { UserBubble } from "./UserBubble";
 interface ConversationFeedProps {
   turns: CompletedTurn[];
   pendingQuestion: string | null;
+  streaming: boolean;
   liveTrace: TraceEvent[];
   liveAnswer: string;
   liveStatus: string;
@@ -23,6 +24,8 @@ interface ConversationFeedProps {
   requestError: string | null;
   failedResult: ChatResponse | null;
   loadingConversation: boolean;
+  backgroundNotice: string | null;
+  onRetryInitialization: (() => void) | null;
   conversationEndRef: RefObject<HTMLDivElement | null>;
   onSuggestion: (value: string) => void;
 }
@@ -31,6 +34,7 @@ interface ConversationFeedProps {
 export function ConversationFeed({
   turns,
   pendingQuestion,
+  streaming,
   liveTrace,
   liveAnswer,
   liveStatus,
@@ -38,13 +42,19 @@ export function ConversationFeed({
   requestError,
   failedResult,
   loadingConversation,
+  backgroundNotice,
+  onRetryInitialization,
   conversationEndRef,
   onSuggestion,
 }: ConversationFeedProps) {
   return (
-    <section className="conversation" aria-live="polite">
+    <section className="conversation">
       {loadingConversation ? (
         <div className="session-loading">正在加载会话…</div>
+      ) : null}
+
+      {backgroundNotice ? (
+        <div className="background-notice" role="status">{backgroundNotice}</div>
       ) : null}
 
       {!loadingConversation && !turns.length && !pendingQuestion && !requestError ? (
@@ -58,6 +68,7 @@ export function ConversationFeed({
       {pendingQuestion ? (
         <PendingAnswer
           question={pendingQuestion}
+          streaming={streaming}
           trace={liveTrace}
           answer={liveAnswer}
           status={liveStatus}
@@ -69,6 +80,15 @@ export function ConversationFeed({
         <div className="error-card" role="alert">
           <strong>当前操作未完成</strong>
           <p>{requestError}</p>
+          {onRetryInitialization ? (
+            <button
+              type="button"
+              className="retry-button"
+              onClick={onRetryInitialization}
+            >
+              重试
+            </button>
+          ) : null}
           {failedResult ? <ResultDetails result={failedResult} /> : null}
         </div>
       ) : null}
@@ -80,12 +100,14 @@ export function ConversationFeed({
 
 function PendingAnswer({
   question,
+  streaming,
   trace,
   answer,
   status,
   usage,
 }: {
   question: string;
+  streaming: boolean;
   trace: TraceEvent[];
   answer: string;
   status: string;
@@ -94,10 +116,15 @@ function PendingAnswer({
   return (
     <>
       <UserBubble question={question} />
-      <div className="assistant-row loading-row">
-        <div className="assistant-avatar" aria-label="研究助手">✦</div>
+      <div
+        className={streaming ? "assistant-row loading-row" : "assistant-row"}
+        aria-busy={streaming}
+      >
+        <div className="assistant-avatar" role="img" aria-label="研究助手">
+          <span aria-hidden="true">✦</span>
+        </div>
         <div className="assistant-content">
-          <LiveTracePanel events={trace} status={status} />
+          <LiveTracePanel events={trace} status={status} active={streaming} />
           {answer ? (
             <div className="markdown-answer live-answer">
               <CitationMarkdown content={answer} papers={[]} />

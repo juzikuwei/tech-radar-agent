@@ -17,7 +17,9 @@ export function ConversationTurn({
     <article className="exchange">
       <UserBubble question={turn.question} />
       <div className="assistant-row">
-        <div className="assistant-avatar" aria-label="研究助手">✦</div>
+        <div className="assistant-avatar" role="img" aria-label="研究助手">
+          <span aria-hidden="true">✦</span>
+        </div>
         <div className="assistant-content">
           <div className="answer-meta">
             <span>研究助手 · {String(index).padStart(2, "0")}</span>

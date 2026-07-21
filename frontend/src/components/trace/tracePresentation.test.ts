@@ -48,4 +48,30 @@ describe("presentTraceEvents", () => {
     expect(step.label).toBe("本地证据不足，已安全拒答");
     expect(step.status).toBe("failed");
   });
+
+  it("folds retrying events into the pending model step", () => {
+    const steps = presentTraceEvents([
+      event({ status: "started", details: {} }),
+      event({ status: "retrying", duration_ms: 40 }),
+    ]);
+
+    expect(steps).toHaveLength(1);
+    expect(steps[0].label).toBe("模型请求重试");
+    expect(steps[0].status).toBe("retrying");
+    expect(steps[0].rawEvents).toHaveLength(2);
+  });
+
+  it("closes a retried model step with its terminal event", () => {
+    const steps = presentTraceEvents([
+      event({ status: "started", details: {} }),
+      event({ status: "retrying", duration_ms: 40 }),
+      event({ status: "completed", details: {}, duration_ms: 900 }),
+    ]);
+
+    expect(steps).toHaveLength(1);
+    expect(steps[0].label).toBe("模型生成回答");
+    expect(steps[0].status).toBe("completed");
+    expect(steps[0].duration_ms).toBe(900);
+    expect(steps[0].rawEvents).toHaveLength(3);
+  });
 });

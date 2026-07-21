@@ -54,20 +54,6 @@ export async function deleteConversation(conversationId: string): Promise<void> 
   );
 }
 
-export async function sendChat(
-  conversationId: string,
-  payload: ChatRequest,
-): Promise<ChatResponse> {
-  return requestJson<ChatResponse>(
-    `/conversations/${encodeURIComponent(conversationId)}/chat`,
-    {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-    },
-  );
-}
-
 export async function sendChatStream(
   conversationId: string,
   payload: ChatRequest,
@@ -111,27 +97,47 @@ export async function sendChatStream(
   let buffer = "";
   let result: ChatResponse | null = null;
 
-  while (true) {
-    const chunk = await reader.read();
-    buffer += decoder.decode(chunk.value, { stream: !chunk.done });
-    buffer = buffer.replace(/\r\n/g, "\n");
-    const blocks = buffer.split("\n\n");
-    buffer = blocks.pop() ?? "";
-    for (const block of blocks) {
-      result = consumeSseBlock(block, handlers, result);
+  try {
+    while (true) {
+      const chunk = await reader.read();
+      buffer += decoder.decode(chunk.value, { stream: !chunk.done });
+      buffer = buffer.replace(/\r\n/g, "\n");
+      const blocks = buffer.split("\n\n");
+      buffer = blocks.pop() ?? "";
+      for (const block of blocks) {
+        result = consumeSseBlock(block, handlers, result);
+      }
+      if (chunk.done) {
+        break;
+      }
     }
-    if (chunk.done) {
-      break;
+
+    if (buffer.trim()) {
+      result = consumeSseBlock(buffer, handlers, result);
     }
+  } catch (error) {
+    if (isAbortError(error) || error instanceof ApiError) {
+      throw error;
+    }
+    throw new ApiError(
+      "读取响应流时连接中断，请检查网络或后端服务后重试。",
+      response.status,
+    );
+  } finally {
+    reader.cancel().catch(() => {});
   }
 
-  if (buffer.trim()) {
-    result = consumeSseBlock(buffer, handlers, result);
-  }
   if (!result) {
     throw new ApiError("响应流提前结束，没有收到最终回答。", response.status);
   }
   return result;
+}
+
+function isAbortError(error: unknown): boolean {
+  if (typeof DOMException !== "undefined" && error instanceof DOMException) {
+    return error.name === "AbortError";
+  }
+  return error instanceof Error && error.name === "AbortError";
 }
 
 function consumeSseBlock(
@@ -150,6 +156,8 @@ function consumeSseBlock(
 
   const data = block
     .split("\n")
+    // SSE 规范：以 ":" 开头的行是注释（如 ": ping" 心跳），必须忽略。
+    .filter((line) => !line.startsWith(":"))
     .filter((line) => line.startsWith("data:"))
     .map((line) => line.slice(5).trimStart())
     .join("\n");

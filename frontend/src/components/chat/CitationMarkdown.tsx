@@ -1,6 +1,8 @@
 import { Children, Fragment, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
+import remarkGfm from "remark-gfm";
 
+import { safeArxivUrl } from "../../lib/arxivUrl";
 import type { Paper } from "../../types";
 
 
@@ -49,6 +51,12 @@ export function CitationMarkdown({
     h6: ({ node: _node, children, ...props }) => (
       <h6 {...props}>{citationChildren(children)}</h6>
     ),
+    td: ({ node: _node, children, ...props }) => (
+      <td {...props}>{citationChildren(children)}</td>
+    ),
+    th: ({ node: _node, children, ...props }) => (
+      <th {...props}>{citationChildren(children)}</th>
+    ),
     a: ({ node: _node, children, ...props }) => (
       <a {...props} target="_blank" rel="noreferrer noopener">
         {children}
@@ -56,7 +64,11 @@ export function CitationMarkdown({
     ),
   };
 
-  return <ReactMarkdown components={components}>{content}</ReactMarkdown>;
+  return (
+    <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+      {content}
+    </ReactMarkdown>
+  );
 }
 
 
@@ -69,25 +81,6 @@ function buildCitationLinks(papers: Paper[]): Map<string, string> {
     }
   }
   return links;
-}
-
-
-function safeArxivUrl(paper: Paper): string | null {
-  try {
-    const url = new URL(paper.entry_url);
-    if (!["http:", "https:"].includes(url.protocol) || url.hostname !== "arxiv.org") {
-      return null;
-    }
-    const prefix = "/abs/";
-    if (!url.pathname.startsWith(prefix)) return null;
-    const pathId = decodeURIComponent(url.pathname.slice(prefix.length))
-      .replace(/\/$/, "")
-      .replace(/v\d+$/i, "");
-    if (pathId !== paper.arxiv_id) return null;
-    return url.toString();
-  } catch {
-    return null;
-  }
 }
 
 

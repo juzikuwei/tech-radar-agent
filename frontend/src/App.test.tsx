@@ -141,7 +141,7 @@ describe("App", () => {
     const user = userEvent.setup();
     render(<App />);
 
-    await waitFor(() => expect(screen.getByLabelText(INPUT_LABEL)).toBeEnabled());
+    await waitForSessionReady();
     await user.type(screen.getByLabelText(INPUT_LABEL), "Agentic RAG 是什么？");
     await user.click(screen.getByRole("button", { name: "发送" }));
 
@@ -233,7 +233,7 @@ describe("App", () => {
     );
     render(<App />);
 
-    await waitFor(() => expect(screen.getByLabelText(INPUT_LABEL)).toBeEnabled());
+    await waitForSessionReady();
     await user.type(screen.getByLabelText(INPUT_LABEL), "显示执行过程");
     await user.click(screen.getByRole("button", { name: "发送" }));
 
@@ -251,7 +251,7 @@ describe("App", () => {
     const user = userEvent.setup();
     render(<App />);
 
-    await waitFor(() => expect(screen.getByLabelText(INPUT_LABEL)).toBeEnabled());
+    await waitForSessionReady();
     await user.click(screen.getByRole("button", { name: /可靠管线/ }));
     await user.type(screen.getByLabelText(INPUT_LABEL), "使用固定流程");
     await user.click(screen.getByRole("button", { name: "发送" }));
@@ -266,6 +266,176 @@ describe("App", () => {
       expect.any(AbortSignal),
     );
   });
+
+  it("keeps the composer usable when creating a conversation fails mid-stream", async () => {
+    const user = userEvent.setup();
+    vi.mocked(sendChatStream).mockImplementation(
+      (_conversationId, _payload, _handlers, signal) =>
+        new Promise<ChatResponse>((_, reject) => {
+          signal?.addEventListener("abort", () =>
+            reject(new DOMException("aborted", "AbortError")),
+          );
+        }),
+    );
+    vi.mocked(createConversation).mockRejectedValue(new Error("新建会话失败"));
+    render(<App />);
+
+    await waitForSessionReady();
+    await user.type(screen.getByLabelText(INPUT_LABEL), "触发流式");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+    expect(await screen.findByRole("button", { name: "处理中" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "新对话" }));
+
+    expect(await screen.findByText("新建会话失败")).toBeInTheDocument();
+    // 输入框与发送按钮恢复可用，没有被永久禁用。
+    expect(screen.getByLabelText(INPUT_LABEL)).toBeEnabled();
+    expect(screen.getByRole("button", { name: "发送" })).toBeInTheDocument();
+    await user.type(screen.getByLabelText(INPUT_LABEL), "再次提问");
+    expect(screen.getByRole("button", { name: "发送" })).toBeEnabled();
+  });
+
+  it("keeps the composer usable when deleting the active conversation fails mid-stream", async () => {
+    const user = userEvent.setup();
+    vi.mocked(sendChatStream).mockImplementation(
+      (_conversationId, _payload, _handlers, signal) =>
+        new Promise<ChatResponse>((_, reject) => {
+          signal?.addEventListener("abort", () =>
+            reject(new DOMException("aborted", "AbortError")),
+          );
+        }),
+    );
+    vi.mocked(deleteConversation).mockRejectedValue(new Error("删除会话失败"));
+    render(<App />);
+
+    await waitForSessionReady();
+    await user.type(screen.getByLabelText(INPUT_LABEL), "触发流式");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+    expect(await screen.findByRole("button", { name: "处理中" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "删除会话 第一个会话" }));
+
+    expect(await screen.findByText("删除会话失败")).toBeInTheDocument();
+    expect(screen.getByLabelText(INPUT_LABEL)).toBeEnabled();
+    await user.type(screen.getByLabelText(INPUT_LABEL), "再次提问");
+    expect(screen.getByRole("button", { name: "发送" })).toBeEnabled();
+  });
+
+  it("keeps switching to another conversation as a designed abort with a soft notice", async () => {
+    const user = userEvent.setup();
+    vi.mocked(listConversations).mockResolvedValue([firstSummary, secondSummary]);
+    vi.mocked(getConversation).mockImplementation(async (conversationId) => (
+      conversationId === secondSummary.conversation_id
+        ? conversation(secondSummary, "第二个会话的历史。")
+        : conversation(firstSummary)
+    ));
+    vi.mocked(sendChatStream).mockImplementation(
+      (_conversationId, _payload, _handlers, signal) =>
+        new Promise<ChatResponse>((_, reject) => {
+          signal?.addEventListener("abort", () =>
+            reject(new DOMException("aborted", "AbortError")),
+          );
+        }),
+    );
+    render(<App />);
+
+    await waitForSessionReady();
+    await user.type(screen.getByLabelText(INPUT_LABEL), "触发流式");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+    expect(await screen.findByRole("button", { name: "处理中" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /第二个会话1 轮/ }));
+
+    expect(await screen.findByText("第二个会话的历史。")).toBeInTheDocument();
+    expect(
+      screen.getByText("上一条回答将在后台继续生成，稍后可回到原会话查看。"),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("does not abort the stream when re-selecting the active conversation", async () => {
+    const user = userEvent.setup();
+    vi.mocked(sendChatStream).mockImplementation(
+      (_conversationId, _payload, handlers, signal) => {
+        handlers.onAssistantDelta("进行中的回答");
+        return new Promise<ChatResponse>((_, reject) => {
+          signal?.addEventListener("abort", () =>
+            reject(new DOMException("aborted", "AbortError")),
+          );
+        });
+      },
+    );
+    render(<App />);
+
+    await waitForSessionReady();
+    await user.type(screen.getByLabelText(INPUT_LABEL), "触发流式");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+    expect(await screen.findByText("进行中的回答")).toBeInTheDocument();
+
+    const loadsBeforeReselect = vi.mocked(getConversation).mock.calls.length;
+    await user.click(screen.getByRole("button", { name: /第一个会话0 轮/ }));
+
+    // same-id 选择是 no-op：流式内容保留、不重新拉取会话。
+    expect(screen.getByText("进行中的回答")).toBeInTheDocument();
+    expect(vi.mocked(getConversation).mock.calls.length).toBe(loadsBeforeReselect);
+  });
+
+  it("renders retrieval evidence when generation fails softly", async () => {
+    const user = userEvent.setup();
+    vi.mocked(sendChatStream).mockResolvedValue({
+      ...response,
+      answer: null,
+      generation_error: "生成失败：引用校验未通过",
+    });
+    render(<App />);
+
+    await waitForSessionReady();
+    await user.type(screen.getByLabelText(INPUT_LABEL), "软失败问题");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("生成失败：引用校验未通过");
+    expect(
+      screen.getByText("Agentic Retrieval-Augmented Generation"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "发送" })).toBeInTheDocument();
+  });
+
+  it("keeps partial answer and trace visible when the stream fails midway", async () => {
+    const user = userEvent.setup();
+    vi.mocked(sendChatStream).mockImplementation(
+      async (_conversationId, _payload, handlers) => {
+        handlers.onStatus("模型正在生成回答…");
+        handlers.onTrace(response.trace[0] as TraceEvent);
+        handlers.onAssistantDelta("已经流出的部分回答");
+        throw new Error("读取响应流时连接中断，请检查网络或后端服务后重试。");
+      },
+    );
+    render(<App />);
+
+    await waitForSessionReady();
+    await user.type(screen.getByLabelText(INPUT_LABEL), "中途失败");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("读取响应流时连接中断");
+    // 已流出的部分回答与 Trace 与错误卡并存。
+    expect(screen.getByText("已经流出的部分回答")).toBeInTheDocument();
+    expect(screen.getByText("生成最终回答")).toBeInTheDocument();
+    // 输入框可继续提问。
+    expect(screen.getByLabelText(INPUT_LABEL)).toBeEnabled();
+    expect(screen.getByRole("button", { name: "发送" })).toBeInTheDocument();
+  });
 });
 
 const INPUT_LABEL = "继续追问或开始一个新技术话题";
+
+async function waitForSessionReady() {
+  // 输入框不再 disabled，以“会话加载提示消失 + 发送按钮就绪”为就绪信号。
+  await waitFor(() =>
+    expect(screen.queryByText("正在加载会话…")).not.toBeInTheDocument(),
+  );
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "发送" })).toBeInTheDocument(),
+  );
+}

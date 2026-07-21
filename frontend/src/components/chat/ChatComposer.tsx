@@ -1,4 +1,4 @@
-import { FormEvent } from "react";
+import { FormEvent, useEffect, useRef } from "react";
 
 
 interface ChatComposerProps {
@@ -15,9 +15,34 @@ export function ChatComposer({
   onDraftChange,
   onSubmit,
 }: ChatComposerProps) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const wasPending = useRef(pending);
+
+  useEffect(() => {
+    if (wasPending.current && !pending) {
+      textareaRef.current?.focus();
+    }
+    wasPending.current = pending;
+  }, [pending]);
+
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) {
+      return;
+    }
+    // 自动增高：按内容 scrollHeight 设置高度，CSS max-height 负责封顶。
+    textarea.style.height = "auto";
+    if (textarea.scrollHeight > 0) {
+      textarea.style.height = `${textarea.scrollHeight}px`;
+    }
+  }, [draft]);
+
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    void onSubmit(draft);
+    if (pending) {
+      return;
+    }
+    onSubmit(draft);
   }
 
   return (
@@ -29,6 +54,7 @@ export function ChatComposer({
         <div className="composer-row">
           <textarea
             id="question"
+            ref={textareaRef}
             value={draft}
             onChange={(event) => onDraftChange(event.target.value)}
             onKeyDown={(event) => {
@@ -37,12 +63,13 @@ export function ChatComposer({
               }
               if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault();
-                void onSubmit(draft);
+                if (!pending) {
+                  onSubmit(draft);
+                }
               }
             }}
             placeholder="给研究助手发送消息"
             rows={1}
-            disabled={pending}
           />
           <button
             className="primary-button"

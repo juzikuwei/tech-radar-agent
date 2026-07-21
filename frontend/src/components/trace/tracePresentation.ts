@@ -22,17 +22,27 @@ export function presentTraceEvents(events: TraceEvent[]): PresentedTraceStep[] {
         steps.push(toStep(event, eventIndex, "模型正在分析问题"));
         return;
       }
-      if (
-        pendingModelIndex !== null
-        && ["completed", "failed"].includes(event.status)
-      ) {
-        steps[pendingModelIndex] = mergeStep(
-          steps[pendingModelIndex],
-          event,
-          modelLabel(event),
-        );
-        pendingModelIndex = null;
-        return;
+      if (pendingModelIndex !== null) {
+        if (["completed", "failed"].includes(event.status)) {
+          steps[pendingModelIndex] = mergeStep(
+            steps[pendingModelIndex],
+            event,
+            modelLabel(event),
+          );
+          pendingModelIndex = null;
+          return;
+        }
+        if (event.status === "retrying") {
+          // 重试并入当前 pending 的模型步骤，避免出现永不闭合的独立条目。
+          const pendingStep = steps[pendingModelIndex];
+          steps[pendingModelIndex] = {
+            ...pendingStep,
+            label: "模型请求重试",
+            status: event.status,
+            rawEvents: [...pendingStep.rawEvents, event],
+          };
+          return;
+        }
       }
     }
 
